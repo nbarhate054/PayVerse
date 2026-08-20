@@ -1,0 +1,10 @@
+{
+  "description": "Design and prototype user interfaces effortlessly with intuitive tools, streamlining the process for designers and developers to create engaging applications.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

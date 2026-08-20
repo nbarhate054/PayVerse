@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 320" width="100%" height="100%">
+  <defs>
+    <!-- Gradients for the 3D Ribbon P Mark -->
+    <linearGradient id="pv-top-loop" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D2FF" />
+      <stop offset="50%" stop-color="#0066FF" />
+      <stop offset="100%" stop-color="#4F46E5" />
+    </linearGradient>
+
+    <linearGradient id="pv-back-fold" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1E1B4B" />
+      <stop offset="40%" stop-color="#3730A3" />
+      <stop offset="100%" stop-color="#4F46E5" />
+    </linearGradient>
+
+    <linearGradient id="pv-bottom-swoop" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2563EB" />
+      <stop offset="60%" stop-color="#0066FF" />
+      <stop offset="100%" stop-color="#00D2FF" />
+    </linearGradient>
+
+    <linearGradient id="pv-play-btn" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D2FF" />
+      <stop offset="100%" stop-color="#0284C7" />
+    </linearGradient>
+
+    <linearGradient id="pv-v-mark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00D2FF" />
+      <stop offset="100%" stop-color="#2563EB" />
+    </linearGradient>
+
+    <linearGradient id="pv-erse-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2563EB" />
+      <stop offset="50%" stop-color="#4F46E5" />
+      <stop offset="100%" stop-color="#7C3AED" />
+    </linearGradient>
+
+    <!-- Drop Shadows for 3D Layering -->
+    <filter id="shadow-soft" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#1e1b4b" flood-opacity="0.15" />
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow-soft)">
+    <!-- 1. BACK/INNER LOOP RIBBON -->
+    <path
+      d="M 175 125 
+         C 160 170, 140 195, 175 220 
+         C 205 240, 235 210, 255 175 
+         C 240 160, 220 150, 200 150 
+         Z"
+      fill="url(#pv-back-fold)"
+    />
+
+    <!-- 2. MAIN SWOOPING FRONT RIBBON P -->
+    <!-- Top Arc of P -->
+    <path
+      d="M 145 110
+         C 145 60, 265 50, 275 115
+         C 285 175, 205 185, 160 165
+         C 140 155, 130 135, 145 110 Z"
+      fill="url(#pv-top-loop)"
+    />
+
+    <!-- Lower Swoop of P/V -->
+    <path
+      d="M 145 105
+         C 115 130, 145 200, 180 235
+         C 195 250, 210 230, 220 205
+         C 205 185, 185 160, 170 135 Z"
+      fill="url(#pv-bottom-swoop)"
+    />
+
+    <!-- Play Button Triangle inside P loop -->
+    <polygon points="195,95 235,115 195,135" fill="url(#pv-play-btn)" />
+  </g>
+
+  <!-- 3. WORDMARK "PayVerse" -->
+  <g transform="translate(45, 275)">
+    <!-- "Pay" text in dark navy -->
+    <text
+      x="0"
+      y="0"
+      font-family="Inter, system-ui, -apple-system, sans-serif"
+      font-weight="900"
+      font-size="54"
+      fill="#0B132B"
+      letter-spacing="-1.5"
+    >Pay</text>
+
+    <!-- Stylized Ribbon "V" -->
+    <path
+      d="M 105 -42 
+         L 125 0 
+         L 155 -48 
+         L 138 -48 
+         L 122 -14 
+         L 114 -42 Z"
+      fill="url(#pv-v-mark)"
+    />
+
+    <!-- "erse" text in indigo/purple gradient -->
+    <text
+      x="142"
+      y="0"
+      font-family="Inter, system-ui, -apple-system, sans-serif"
+      font-weight="900"
+      font-size="54"
+      fill="url(#pv-erse-grad)"
+      letter-spacing="-1.5"
+    >erse</text>
+  </g>
+
+  <!-- 4. TAGLINE "Designed for the Digital Generation." -->
+  <g transform="translate(200, 305)">
+    <!-- Left Accent Line -->
+    <line x1="-150" y1="-4" x2="-100" y2="-4" stroke="#0066FF" stroke-width="1.5" stroke-linecap="round" />
+    
+    <!-- Tagline Text -->
+    <text
+      x="0"
+      y="0"
+      text-anchor="middle"
+      font-family="Inter, system-ui, -apple-system, sans-serif"
+      font-style="italic"
+      font-weight="600"
+      font-size="12"
+      fill="#475569"
+      letter-spacing="0.2"
+    >Designed for the Digital Generation.</text>
+
+    <!-- Right Accent Line -->
+    <line x1="100" y1="-4" x2="150" y2="-4" stroke="#0066FF" stroke-width="1.5" stroke-linecap="round" />
+  </g>
+</svg>

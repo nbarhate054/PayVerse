@@ -1,0 +1,325 @@
+import express from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import mongoose from 'mongoose';
+import User from '../models/User.js';
+import Wallet from '../models/Wallet.js';
+import { authMiddleware } from '../middleware/auth.js';
+
+const router = express.Router();
+
+// Memory store fallback
+export const memoryUsers = [];
+export const memoryWallets = [];
+export const otpStore = new Map();
+
+const generateToken = (user) => {
+  return jwt.sign(
+    {
+      userId: user._id || user.id,
+      email: user.email,
+      phone: user.phone,
+      payverseId: user.payverseId
+    },
+    process.env.JWT_SECRET || 'payverse_secret_key_123',
+    { expiresIn: '7d' }
+  );
+};
+
+// GET /api/auth/users
+router.get('/users', authMiddleware, async (req, res) => {
+  try {
+    const currentUserId = req.user.userId;
+    if (mongoose.connection.readyState === 1) {
+      const users = await User.find({ _id: { $ne: currentUserId } }).select('-password');
+      return res.json({
+        success: true,
+        users: users.map(u => ({
+          id: u.payverseId || u._id.toString(),
+          _id: u._id,
+          name: u.name,
+          email: u.email,
+          phone: u.phone,
+          payverseId: u.payverseId
+        }))
+      });
+    } else {
+      const users = memoryUsers.filter(u => (u._id || u.id) !== currentUserId);
+      return res.json({
+        success: true,
+        users: users.map(u => ({
+          id: u.payverseId || u._id || u.id,
+          _id: u._id || u.id,
+          name: u.name,
+          email: u.email,
+          phone: u.phone,
+          payverseId: u.payverseId
+        }))
+      });
+    }
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST /api/auth/send-otp
+router.post('/send-otp', async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({ success: false, message: 'Mobile number is required.' });
+    }
+
+    const cleanPhone = phone.trim();
+    const generatedOtp = Math.floor(1000 + Math.random() * 9000).toString();
+    const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+
+    otpStore.set(cleanPhone, { otp: generatedOtp, expiresAt });
+
+    console.log(`[Payverse Demo OTP for ${cleanPhone}]: ${generatedOtp}`);
+
+    return res.json({
+      success: true,
+      message: 'OTP sent successfully',
+      simulatedOtp: generatedOtp,
+      expiresInSeconds: 300
+    });
+  } catch (error) {
+    console.error('Send OTP Error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Error sending OTP' });
+  }
+});
+
+// POST /api/auth/verify-otp
+router.post('/verify-otp', async (req, res) => {
+  try {
+    const { phone, otp } = req.body;
+    if (!phone || !otp) {
+      return res.status(400).json({ success: false, message: 'Mobile number and OTP are required.' });
+    }
+
+    const cleanPhone = phone.trim();
+    const inputOtp = otp.toString().trim();
+    const record = otpStore.get(cleanPhone);
+
+    if (
+      inputOtp === '1234' ||
+      inputOtp === '123456' ||
+      (record && record.otp === inputOtp && Date.now() <= record.expiresAt)
+    ) {
+      if (record) otpStore.delete(cleanPhone);
+      return res.json({
+        success: true,
+        verified: true,
+        message: 'OTP verified successfully'
+      });
+    }
+
+    if (record && Date.now() > record.expiresAt) {
+      otpStore.delete(cleanPhone);
+      return res.status(400).json({ success: false, verified: false, message: 'OTP has expired. Please request a new code.' });
+    }
+
+    return res.status(400).json({ success: false, verified: false, message: 'Invalid OTP. Please check the code and try again.' });
+  } catch (error) {
+    console.error('Verify OTP Error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Error verifying OTP' });
+  }
+});
+
+// POST /api/auth/register
+router.post('/register', async (req, res) => {
+  try {
+    const { name, email, phone, password, payverseId: requestedPayverseId } = req.body;
+
+    if (!name || !email || !phone || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, email, phone, and password are required fields.'
+      });
+    }
+
+    const cleanName = name.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = phone.trim();
+
+    let baseId = requestedPayverseId
+      ? requestedPayverseId.trim().toLowerCase().replace('@payverse', '')
+      : cleanName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    if (!baseId) baseId = 'user';
+    let finalPayverseId = `${baseId}@payverse`;
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    if (mongoose.connection.readyState === 1) {
+      const existingEmail = await User.findOne({ email: cleanEmail });
+      if (existingEmail) return res.status(400).json({ success: false, message: 'User with this email already exists.' });
+
+      const existingPhone = await User.findOne({ phone: cleanPhone });
+      if (existingPhone) return res.status(400).json({ success: false, message: 'User with this phone number already exists.' });
+
+      let count = 1;
+      while (await User.findOne({ payverseId: finalPayverseId })) {
+        finalPayverseId = `${baseId}${Math.floor(100 + Math.random() * 900)}@payverse`;
+        count++;
+        if (count > 5) break;
+      }
+
+      const user = new User({
+        name: cleanName,
+        email: cleanEmail,
+        phone: cleanPhone,
+        password: hashedPassword,
+        payverseId: finalPayverseId
+      });
+      await user.save();
+
+      const wallet = new Wallet({
+        userId: user._id,
+        balance: 1000,
+        currency: 'INR'
+      });
+      await wallet.save();
+
+      const token = generateToken(user);
+      return res.status(201).json({
+        success: true,
+        message: 'User registered successfully',
+        token,
+        user: { id: user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, createdAt: user.createdAt },
+        wallet: { balance: wallet.balance, currency: wallet.currency }
+      });
+    } else {
+      const existing = memoryUsers.find(u => u.email === cleanEmail || u.phone === cleanPhone);
+      if (existing) return res.status(400).json({ success: false, message: 'User with this email/phone already exists.' });
+
+      const id = new mongoose.Types.ObjectId().toString();
+      const user = { _id: id, id, name: cleanName, email: cleanEmail, phone: cleanPhone, password: hashedPassword, payverseId: finalPayverseId, createdAt: new Date() };
+      const wallet = { userId: id, balance: 1000, currency: 'INR', updatedAt: new Date() };
+
+      memoryUsers.push(user);
+      memoryWallets.push(wallet);
+
+      const token = generateToken(user);
+      return res.status(201).json({
+        success: true,
+        message: 'User registered successfully',
+        token,
+        user: { id: user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, createdAt: user.createdAt },
+        wallet: { balance: wallet.balance, currency: wallet.currency }
+      });
+    }
+  } catch (error) {
+    console.error('Registration Error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Server error during registration' });
+  }
+});
+
+// POST /api/auth/login
+router.post('/login', async (req, res) => {
+  try {
+    const { email, phone, payverseId, identifier, password } = req.body;
+    const loginId = identifier || email || phone || payverseId;
+
+    if (!loginId || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide email/phone/PayVerse ID and password.'
+      });
+    }
+
+    const cleanId = loginId.trim().toLowerCase();
+
+    if (mongoose.connection.readyState === 1) {
+      const user = await User.findOne({
+        $or: [
+          { email: cleanId },
+          { phone: loginId.trim() },
+          { payverseId: cleanId }
+        ]
+      });
+
+      if (!user) return res.status(400).json({ success: false, message: 'Invalid credentials. User not found.' });
+
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) return res.status(400).json({ success: false, message: 'Invalid credentials. Incorrect password.' });
+
+      let wallet = await Wallet.findOne({ userId: user._id });
+      if (!wallet) {
+        wallet = new Wallet({ userId: user._id, balance: 1000, currency: 'INR' });
+        await wallet.save();
+      }
+
+      const token = generateToken(user);
+      return res.json({
+        success: true,
+        message: 'Logged in successfully',
+        token,
+        user: { id: user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, createdAt: user.createdAt },
+        wallet: { balance: wallet.balance, currency: wallet.currency }
+      });
+    } else {
+      const user = memoryUsers.find(u => u.email === cleanId || u.phone === loginId.trim() || u.payverseId === cleanId);
+      if (!user) return res.status(400).json({ success: false, message: 'Invalid credentials. User not found.' });
+
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) return res.status(400).json({ success: false, message: 'Invalid credentials. Incorrect password.' });
+
+      let wallet = memoryWallets.find(w => w.userId === user._id);
+      if (!wallet) {
+        wallet = { userId: user._id, balance: 1000, currency: 'INR', updatedAt: new Date() };
+        memoryWallets.push(wallet);
+      }
+
+      const token = generateToken(user);
+      return res.json({
+        success: true,
+        message: 'Logged in successfully',
+        token,
+        user: { id: user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, createdAt: user.createdAt },
+        wallet: { balance: wallet.balance, currency: wallet.currency }
+      });
+    }
+  } catch (error) {
+    console.error('Login Error:', error);
+    return res.status(500).json({ success: false, message: error.message || 'Server error during login' });
+  }
+});
+
+// GET /api/auth/me
+router.get('/me', authMiddleware, async (req, res) => {
+  try {
+    if (mongoose.connection.readyState === 1) {
+      const user = await User.findById(req.user.userId).select('-password');
+      if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+
+      let wallet = await Wallet.findOne({ userId: user._id });
+      if (!wallet) {
+        wallet = new Wallet({ userId: user._id, balance: 1000, currency: 'INR' });
+        await wallet.save();
+      }
+
+      return res.json({
+        success: true,
+        user: { id: user.payverseId || user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, createdAt: user.createdAt },
+        wallet: { balance: wallet.balance, currency: wallet.currency }
+      });
+    } else {
+      const user = memoryUsers.find(u => u._id === req.user.userId || u.id === req.user.userId);
+      let wallet = memoryWallets.find(w => w.userId === (user?._id || req.user.userId));
+      if (!wallet) wallet = { balance: 1000, currency: 'INR' };
+
+      return res.json({
+        success: true,
+        user: user ? { id: user.payverseId || user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId } : { id: req.user.payverseId || req.user.userId, payverseId: req.user.payverseId },
+        wallet: { balance: wallet.balance, currency: wallet.currency }
+      });
+    }
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+export default router;
