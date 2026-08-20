@@ -1,6 +1,7 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import Transaction from '../models/Transaction.js';
+import User from '../models/User.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { memoryTransactions } from './wallet.js';
 
@@ -9,13 +10,32 @@ const router = express.Router();
 // GET /api/transactions/history
 router.get('/history', authMiddleware, async (req, res) => {
   try {
-    const userId = req.user.userId;
+    const rawUserId = req.user.userId;
 
     if (mongoose.connection.readyState === 1) {
+      let userObjId = rawUserId;
+      if (!mongoose.isValidObjectId(rawUserId)) {
+        const cleanId = rawUserId.toString().trim().toLowerCase();
+        const user = await User.findOne({
+          $or: [
+            { payverseId: cleanId },
+            { email: cleanId },
+            { phone: rawUserId },
+            { username: cleanId },
+            { vpa: cleanId }
+          ]
+        });
+        if (user) userObjId = user._id;
+      }
+
+      if (!mongoose.isValidObjectId(userObjId)) {
+        return res.json({ success: true, count: 0, transactions: [] });
+      }
+
       const transactions = await Transaction.find({
         $or: [
-          { senderId: userId },
-          { receiverId: userId }
+          { senderId: userObjId },
+          { receiverId: userObjId }
         ]
       })
         .sort({ timestamp: -1 })

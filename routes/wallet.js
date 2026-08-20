@@ -9,15 +9,46 @@ import { memoryUsers, memoryWallets } from './auth.js';
 const router = express.Router();
 export const memoryTransactions = [];
 
+// Helper function to safely find User without throwing Cast to ObjectId failed
+const findUserByIdentifier = async (identifier) => {
+  if (!identifier) return null;
+  const raw = identifier.toString().trim();
+  const clean = raw.toLowerCase();
+
+  const conditions = [
+    { vpa: clean },
+    { vpa: raw },
+    { email: clean },
+    { phone: raw },
+    { username: clean },
+    { payverseId: clean },
+    { payverseId: raw },
+    { payverseId: clean.endsWith('@payverse') ? clean : `${clean}@payverse` }
+  ];
+
+  if (mongoose.isValidObjectId(raw)) {
+    conditions.push({ _id: raw });
+  }
+
+  return await User.findOne({ $or: conditions });
+};
+
 // GET /api/wallet/balance
 router.get('/balance', authMiddleware, async (req, res) => {
   try {
-    const userId = req.user.userId;
+    const rawUserId = req.user.userId;
 
     if (mongoose.connection.readyState === 1) {
+      const user = await findUserByIdentifier(rawUserId);
+      const userId = user ? user._id : (mongoose.isValidObjectId(rawUserId) ? rawUserId : null);
+
+      if (!userId) {
+        return res.json({ success: true, balance: 0, currency: 'INR' });
+      }
+
       let wallet = await Wallet.findOne({ userId });
       if (!wallet) {
-        wallet = new Wallet({ userId, balance: 1000, currency: 'INR' });
+        wallet = new Wallet({ userId, balance: 0, currency: 'INR' });
         await wallet.save();
       }
 
@@ -28,9 +59,9 @@ router.get('/balance', authMiddleware, async (req, res) => {
         updatedAt: wallet.updatedAt
       });
     } else {
-      let wallet = memoryWallets.find(w => w.userId === userId);
+      let wallet = memoryWallets.find(w => w.userId === rawUserId);
       if (!wallet) {
-        wallet = { userId, balance: 1000, currency: 'INR', updatedAt: new Date() };
+        wallet = { userId: rawUserId, balance: 0, currency: 'INR', updatedAt: new Date() };
         memoryWallets.push(wallet);
       }
 
@@ -50,37 +81,37 @@ router.get('/balance', authMiddleware, async (req, res) => {
 // POST /api/wallet/transfer
 router.post('/transfer', authMiddleware, async (req, res) => {
   try {
-    const { receiverId, receiverPayverseId, receiverEmail, receiverPhone, amount } = req.body;
+    const { receiverId, receiverPayverseId, receiverEmail, receiverPhone, recipient: recipientBody, amount } = req.body;
     const transferAmount = Number(amount);
 
     if (!transferAmount || isNaN(transferAmount) || transferAmount <= 0) {
       return res.status(400).json({ success: false, message: 'Please enter a valid transfer amount greater than 0.' });
     }
 
-    const senderUserId = req.user.userId;
+    const rawSenderId = req.user.userId;
+    const recipientInput = recipientBody || receiverId || receiverPayverseId || receiverEmail || receiverPhone;
+
+    if (!recipientInput) {
+      return res.status(400).json({ success: false, message: 'Recipient identifier is required.' });
+    }
 
     if (mongoose.connection.readyState === 1) {
+      // 1. Resolve Sender
+      const senderUser = await findUserByIdentifier(rawSenderId);
+      const senderUserId = senderUser ? senderUser._id : (mongoose.isValidObjectId(rawSenderId) ? rawSenderId : null);
+
+      if (!senderUserId) {
+        return res.status(400).json({ success: false, message: 'Sender account invalid or not found.' });
+      }
+
       let senderWallet = await Wallet.findOne({ userId: senderUserId });
       if (!senderWallet) {
-        senderWallet = new Wallet({ userId: senderUserId, balance: 1000, currency: 'INR' });
+        senderWallet = new Wallet({ userId: senderUserId, balance: 0, currency: 'INR' });
         await senderWallet.save();
       }
 
-      const recipientQuery = [];
-      if (receiverId) recipientQuery.push({ _id: receiverId });
-      if (receiverPayverseId) recipientQuery.push({ payverseId: receiverPayverseId.trim().toLowerCase() });
-      if (receiverEmail) recipientQuery.push({ email: receiverEmail.trim().toLowerCase() });
-      if (receiverPhone) recipientQuery.push({ phone: receiverPhone.trim() });
-
-      if (receiverId && typeof receiverId === 'string' && (receiverId.includes('@') || receiverId.length < 24)) {
-        const cleanRec = receiverId.trim().toLowerCase();
-        const recIdWithTag = cleanRec.includes('@payverse') ? cleanRec : `${cleanRec}@payverse`;
-        recipientQuery.push({ payverseId: recIdWithTag });
-        recipientQuery.push({ email: cleanRec });
-        recipientQuery.push({ phone: cleanRec });
-      }
-
-      const receiverUser = await User.findOne({ $or: recipientQuery });
+      // 2. Resolve Recipient using multi-identifier query
+      const receiverUser = await findUserByIdentifier(recipientInput);
       if (!receiverUser) {
         return res.status(404).json({ success: false, message: 'Recipient user not found.' });
       }
@@ -89,6 +120,7 @@ router.post('/transfer', authMiddleware, async (req, res) => {
         return res.status(400).json({ success: false, message: 'You cannot transfer money to yourself.' });
       }
 
+      // 3. Balance Check
       if (senderWallet.balance < transferAmount) {
         const failedTransaction = new Transaction({
           senderId: senderUserId,
@@ -107,9 +139,10 @@ router.post('/transfer', authMiddleware, async (req, res) => {
         });
       }
 
+      // 4. Update Wallets
       let receiverWallet = await Wallet.findOne({ userId: receiverUser._id });
       if (!receiverWallet) {
-        receiverWallet = new Wallet({ userId: receiverUser._id, balance: 1000, currency: 'INR' });
+        receiverWallet = new Wallet({ userId: receiverUser._id, balance: 0, currency: 'INR' });
       }
 
       senderWallet.balance -= transferAmount;
@@ -120,6 +153,7 @@ router.post('/transfer', authMiddleware, async (req, res) => {
       receiverWallet.updatedAt = new Date();
       await receiverWallet.save();
 
+      // 5. Record Transaction
       const transaction = new Transaction({
         senderId: senderUserId,
         receiverId: receiverUser._id,
@@ -136,24 +170,27 @@ router.post('/transfer', authMiddleware, async (req, res) => {
 
       return res.json({
         success: true,
-        message: `Successfully transferred ₹${transferAmount} to ${receiverUser.name} (${receiverUser.payverseId})`,
+        message: `Successfully transferred ₹${transferAmount} to ${receiverUser.name} (${receiverUser.payverseId || receiverUser.phone})`,
         balance: senderWallet.balance,
         transaction: populatedTx
       });
     } else {
-      let senderWallet = memoryWallets.find(w => w.userId === senderUserId);
+      // In-Memory Fallback
+      let senderWallet = memoryWallets.find(w => w.userId === rawSenderId);
       if (!senderWallet) {
-        senderWallet = { userId: senderUserId, balance: 1000, currency: 'INR' };
+        senderWallet = { userId: rawSenderId, balance: 1000, currency: 'INR' };
         memoryWallets.push(senderWallet);
       }
 
-      const cleanRec = (receiverPayverseId || receiverId || receiverEmail || receiverPhone || '').toString().trim().toLowerCase();
+      const cleanRec = recipientInput.toString().trim().toLowerCase();
       let receiverUser = memoryUsers.find(u =>
-        u._id === receiverId ||
-        u.id === receiverId ||
+        u._id === recipientInput ||
+        u.id === recipientInput ||
         u.payverseId?.toLowerCase() === cleanRec ||
+        u.vpa?.toLowerCase() === cleanRec ||
         u.email?.toLowerCase() === cleanRec ||
-        u.phone === cleanRec
+        u.phone === cleanRec ||
+        u.username?.toLowerCase() === cleanRec
       );
 
       if (!receiverUser) {
@@ -170,7 +207,7 @@ router.post('/transfer', authMiddleware, async (req, res) => {
 
       let receiverWallet = memoryWallets.find(w => w.userId === receiverUser._id);
       if (!receiverWallet) {
-        receiverWallet = { userId: receiverUser._id, balance: 1000, currency: 'INR' };
+        receiverWallet = { userId: receiverUser._id, balance: 0, currency: 'INR' };
         memoryWallets.push(receiverWallet);
       }
 
@@ -179,7 +216,7 @@ router.post('/transfer', authMiddleware, async (req, res) => {
 
       const tx = {
         _id: new mongoose.Types.ObjectId().toString(),
-        senderId: { _id: senderUserId, name: 'Sender', payverseId: req.user.payverseId },
+        senderId: { _id: rawSenderId, name: 'Sender', payverseId: req.user.payverseId },
         receiverId: { _id: receiverUser._id, name: receiverUser.name, payverseId: receiverUser.payverseId },
         amount: transferAmount,
         type: 'transfer',
@@ -201,8 +238,8 @@ router.post('/transfer', authMiddleware, async (req, res) => {
   }
 });
 
-// POST /api/wallet/add-money
-router.post('/add-money', authMiddleware, async (req, res) => {
+// POST /api/wallet/add-money, /api/wallet/add, /api/wallet/topup
+const handleAddMoney = async (req, res) => {
   try {
     const { amount } = req.body;
     const addAmount = Number(amount);
@@ -211,12 +248,19 @@ router.post('/add-money', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please enter a valid amount greater than 0.' });
     }
 
-    const userId = req.user.userId;
+    const rawUserId = req.user.id || req.user.userId || req.user._id;
 
     if (mongoose.connection.readyState === 1) {
+      const user = await findUserByIdentifier(rawUserId);
+      const userId = user ? user._id : (mongoose.isValidObjectId(rawUserId) ? rawUserId : null);
+
+      if (!userId) {
+        return res.status(400).json({ success: false, message: 'User account invalid or not found.' });
+      }
+
       let wallet = await Wallet.findOne({ userId });
       if (!wallet) {
-        wallet = new Wallet({ userId, balance: 1000, currency: 'INR' });
+        wallet = new Wallet({ userId, balance: 0, currency: 'INR' });
       }
 
       wallet.balance += addAmount;
@@ -244,17 +288,17 @@ router.post('/add-money', authMiddleware, async (req, res) => {
         transaction: populatedTx
       });
     } else {
-      let wallet = memoryWallets.find(w => w.userId === userId);
+      let wallet = memoryWallets.find(w => w.userId === rawUserId);
       if (!wallet) {
-        wallet = { userId, balance: 1000, currency: 'INR' };
+        wallet = { userId: rawUserId, balance: 0, currency: 'INR' };
         memoryWallets.push(wallet);
       }
 
       wallet.balance += addAmount;
       const tx = {
         _id: new mongoose.Types.ObjectId().toString(),
-        senderId: { _id: userId, name: 'Self', payverseId: req.user.payverseId },
-        receiverId: { _id: userId, name: 'Self', payverseId: req.user.payverseId },
+        senderId: { _id: rawUserId, name: 'Self', payverseId: req.user.payverseId },
+        receiverId: { _id: rawUserId, name: 'Self', payverseId: req.user.payverseId },
         amount: addAmount,
         type: 'add_money',
         status: 'success',
@@ -273,6 +317,10 @@ router.post('/add-money', authMiddleware, async (req, res) => {
     console.error('Add Money Error:', error);
     return res.status(500).json({ success: false, message: error.message || 'Error adding money to wallet' });
   }
-});
+};
+
+router.post('/add-money', authMiddleware, handleAddMoney);
+router.post('/add', authMiddleware, handleAddMoney);
+router.post('/topup', authMiddleware, handleAddMoney);
 
 export default router;

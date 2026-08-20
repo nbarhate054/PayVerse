@@ -40,24 +40,16 @@ app.use('/api/auth', authRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/transactions', transactionRoutes);
 
-// Connect DB with automatic fallback
+// Strictly connect to MongoDB Atlas using process.env.MONGODB_URI (No memory fallback)
 const connectDB = async () => {
   try {
-    console.log('Attempting connection to MongoDB Atlas...');
-    await mongoose.connect(MONGODB_URI, { serverSelectionTimeoutMS: 8000 });
-    console.log('✅ Connected to MongoDB Atlas successfully!');
+    console.log('Connecting to MongoDB Atlas using process.env.MONGODB_URI...');
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 20000
+    });
+    console.log('Connected to MongoDB Atlas successfully');
   } catch (err) {
-    console.warn('⚠️ MongoDB Atlas connection error:', err.message);
-    console.log('🔄 Launching fallback Mongo instance...');
-    try {
-      const { MongoMemoryServer } = await import('mongodb-memory-server');
-      const mongoServer = await MongoMemoryServer.create();
-      const mongoUri = mongoServer.getUri();
-      await mongoose.connect(mongoUri);
-      console.log('✅ Connected to In-Memory MongoDB Fallback Database at:', mongoUri);
-    } catch (memErr) {
-      console.error('❌ MongoDB Fallback Error:', memErr.message);
-    }
+    console.error('❌ Failed to connect to MongoDB Atlas:', err.message);
   }
 };
 

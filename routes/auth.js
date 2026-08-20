@@ -108,9 +108,37 @@ router.post('/verify-otp', async (req, res) => {
       (record && record.otp === inputOtp && Date.now() <= record.expiresAt)
     ) {
       if (record) otpStore.delete(cleanPhone);
+
+      let user;
+      if (mongoose.connection.readyState === 1) {
+        user = await User.findOne({ phone: cleanPhone });
+      } else {
+        user = memoryUsers.find(u => u.phone === cleanPhone);
+      }
+
+      if (user) {
+        const token = generateToken(user);
+        let wallet;
+        if (mongoose.connection.readyState === 1) {
+          wallet = await Wallet.findOne({ userId: user._id });
+        } else {
+          wallet = memoryWallets.find(w => w.userId === user._id);
+        }
+
+        return res.json({
+          success: true,
+          verified: true,
+          token,
+          message: 'OTP verified successfully',
+          user: { id: user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, createdAt: user.createdAt },
+          wallet: { balance: wallet?.balance ?? 0, currency: wallet?.currency || 'INR' }
+        });
+      }
+
       return res.json({
         success: true,
         verified: true,
+        isNewUser: true,
         message: 'OTP verified successfully'
       });
     }
@@ -292,12 +320,29 @@ router.post('/login', async (req, res) => {
 router.get('/me', authMiddleware, async (req, res) => {
   try {
     if (mongoose.connection.readyState === 1) {
-      const user = await User.findById(req.user.userId).select('-password');
+      let user;
+      const uid = req.user.userId;
+      if (mongoose.isValidObjectId(uid)) {
+        user = await User.findById(uid).select('-password');
+      }
+      if (!user && uid) {
+        const cleanUid = uid.toString().trim().toLowerCase();
+        user = await User.findOne({
+          $or: [
+            { payverseId: cleanUid },
+            { email: cleanUid },
+            { phone: uid.toString().trim() },
+            { username: cleanUid },
+            { vpa: cleanUid }
+          ]
+        }).select('-password');
+      }
+
       if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
       let wallet = await Wallet.findOne({ userId: user._id });
       if (!wallet) {
-        wallet = new Wallet({ userId: user._id, balance: 1000, currency: 'INR' });
+        wallet = new Wallet({ userId: user._id, balance: 0, currency: 'INR' });
         await wallet.save();
       }
 

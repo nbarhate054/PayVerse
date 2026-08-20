@@ -2,12 +2,18 @@ import jwt from 'jsonwebtoken';
 
 export const authMiddleware = (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    const authHeader = req.headers.authorization || req.headers.Authorization || req.header('Authorization');
+    if (!authHeader) {
       return res.status(401).json({ success: false, message: 'Access denied. No token provided.' });
     }
 
-    const token = authHeader.split(' ')[1];
+    let token = authHeader;
+    if (typeof authHeader === 'string') {
+      if (authHeader.toLowerCase().startsWith('bearer ')) {
+        token = authHeader.slice(7).trim();
+      }
+    }
+
     if (!token) {
       return res.status(401).json({ success: false, message: 'Access denied. Token missing.' });
     }

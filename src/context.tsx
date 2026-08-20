@@ -195,7 +195,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         updateHash(next[next.length - 1]);
         return next;
       }
-      return prev;
+      const fallback: Screen = { name: 'home' };
+      updateHash(fallback);
+      return [fallback];
     });
   }, []);
 
@@ -217,11 +219,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
     };
 
+    const handleAuthExpired = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      const msg = customEvt.detail || 'Your session has expired. Please log in again.';
+      removeAuthToken();
+      updateState(prev => ({ ...prev, currentUserId: null }));
+      navigateRoot('login');
+      showToast('Session Expired', msg, 'info');
+    };
+
     window.addEventListener('popstate', handleHashChange);
     window.addEventListener('hashchange', handleHashChange);
+    window.addEventListener('auth:expired', handleAuthExpired);
     return () => {
       window.removeEventListener('popstate', handleHashChange);
       window.removeEventListener('hashchange', handleHashChange);
+      window.removeEventListener('auth:expired', handleAuthExpired);
     };
   }, []);
 
@@ -455,10 +468,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           await refreshLiveBackendData();
           return { success: true, transactionId: txId };
         } else {
-          return { success: false, error: res.message || 'Transfer failed.' };
+          const errMsg = res.message || 'Transfer failed.';
+          return { success: false, error: errMsg.includes('token') ? 'Session expired. Please logout and login again.' : errMsg };
         }
       } catch (err: any) {
-        return { success: false, error: err.message || 'Error processing transfer.' };
+        const errMsg = err.message || 'Error processing transfer.';
+        return { success: false, error: errMsg.includes('token') ? 'Session expired. Please logout and login again.' : errMsg };
       }
     },
     [isLocked, clearPinLock, refreshLiveBackendData, updateState],
@@ -489,15 +504,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
           const timestamp = new Date().toISOString();
           const notif: AppNotification = { id: generateId('N'), userId: user.id, title: 'Money Added', message: `₹${amount} added to your PayVerse wallet.`, type: 'MONEY_ADDED', timestamp, read: false, relatedTransactionId: txId };
-          updateState(prev => ({ ...prev, notifications: [notif, ...prev.notifications] }));
+
+          const newBalance = typeof res.balance === 'number' ? res.balance : user.balance + amount;
+          updateState(prev => ({
+            ...prev,
+            users: prev.users.map(u => u.id === user.id ? { ...u, balance: newBalance } : u),
+            notifications: [notif, ...prev.notifications]
+          }));
 
           await refreshLiveBackendData();
           return { success: true, transactionId: txId };
         } else {
-          return { success: false, error: res.message || 'Failed to add money.' };
+          const errMsg = res.message || 'Failed to add money.';
+          return { success: false, error: errMsg.includes('token') ? 'Session expired. Please logout and login again.' : errMsg };
         }
       } catch (err: any) {
-        return { success: false, error: err.message || 'Error adding money.' };
+        const errMsg = err.message || 'Error adding money.';
+        return { success: false, error: errMsg.includes('token') ? 'Session expired. Please logout and login again.' : errMsg };
       }
     },
     [isLocked, clearPinLock, refreshLiveBackendData, updateState],

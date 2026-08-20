@@ -12,7 +12,7 @@ export const removeAuthToken = (): void => {
   localStorage.removeItem('payverse_token');
 };
 
-const getHeaders = (includeAuth = true) => {
+const getHeaders = (includeAuth = true): Record<string, string> => {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
@@ -23,6 +23,26 @@ const getHeaders = (includeAuth = true) => {
     }
   }
   return headers;
+};
+
+const handleResponse = async (response: Response) => {
+  const data = await response.json().catch(() => ({ success: false, message: 'Invalid response from server' }));
+  if (
+    response.status === 401 ||
+    (data && !data.success && typeof data.message === 'string' && (
+      data.message.includes('token') ||
+      data.message.includes('Access denied') ||
+      data.message.includes('Unauthorized')
+    ))
+  ) {
+    removeAuthToken();
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('auth:expired', {
+        detail: data.message || 'Your session has expired. Please log in again.'
+      }));
+    }
+  }
+  return data;
 };
 
 export interface ApiUser {
@@ -68,7 +88,11 @@ export const api = {
       headers: getHeaders(false),
       body: JSON.stringify(data),
     });
-    return await response.json();
+    const result = await response.json();
+    if (result.success && result.token) {
+      setAuthToken(result.token);
+    }
+    return result;
   },
 
   register: async (data: { name: string; email: string; phone: string; password: string; payverseId?: string }) => {
@@ -99,13 +123,18 @@ export const api = {
 
   getMe: async () => {
     const token = getAuthToken();
-    if (!token) return { success: false, message: 'No token' };
+    if (!token) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('auth:expired', { detail: 'Please log in to continue.' }));
+      }
+      return { success: false, message: 'No token' };
+    }
     try {
       const response = await fetch(`${API_BASE_URL}/auth/me`, {
         method: 'GET',
         headers: getHeaders(true),
       });
-      return await response.json();
+      return await handleResponse(response);
     } catch (err: any) {
       return { success: false, message: err.message };
     }
@@ -119,7 +148,7 @@ export const api = {
         method: 'GET',
         headers: getHeaders(true),
       });
-      return await response.json();
+      return await handleResponse(response);
     } catch (err: any) {
       return { success: false, users: [] };
     }
@@ -127,37 +156,60 @@ export const api = {
 
   // Wallet API
   getBalance: async () => {
+    const token = getAuthToken();
+    if (!token) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('auth:expired', { detail: 'Please log in to check balance.' }));
+      }
+      return { success: false, message: 'No token provided' };
+    }
     const response = await fetch(`${API_BASE_URL}/wallet/balance`, {
       method: 'GET',
       headers: getHeaders(true),
     });
-    return await response.json();
+    return await handleResponse(response);
   },
 
   transfer: async (data: { receiverId?: string; receiverPayverseId?: string; receiverEmail?: string; receiverPhone?: string; amount: number }) => {
+    const token = getAuthToken();
+    if (!token) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('auth:expired', { detail: 'Please log in to transfer money.' }));
+      }
+      return { success: false, message: 'Access denied. No token provided.' };
+    }
     const response = await fetch(`${API_BASE_URL}/wallet/transfer`, {
       method: 'POST',
       headers: getHeaders(true),
       body: JSON.stringify(data),
     });
-    return await response.json();
+    return await handleResponse(response);
   },
 
   addMoney: async (data: { amount: number }) => {
+    const token = getAuthToken();
+    if (!token) {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('auth:expired', { detail: 'Please log in to add money.' }));
+      }
+      return { success: false, message: 'Access denied. No token provided.' };
+    }
     const response = await fetch(`${API_BASE_URL}/wallet/add-money`, {
       method: 'POST',
       headers: getHeaders(true),
       body: JSON.stringify(data),
     });
-    return await response.json();
+    return await handleResponse(response);
   },
 
   // Transaction API
   getTransactionHistory: async () => {
+    const token = getAuthToken();
+    if (!token) return { success: false, transactions: [] };
     const response = await fetch(`${API_BASE_URL}/transactions/history`, {
       method: 'GET',
       headers: getHeaders(true),
     });
-    return await response.json();
+    return await handleResponse(response);
   },
 };

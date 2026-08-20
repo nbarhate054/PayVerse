@@ -42,6 +42,16 @@ export default function HistoryScreen() {
     <div className="flex flex-col h-full bg-slate-50">
       <div className="bg-white border-b border-gray-100 px-4 pt-14 pb-0">
         <div className="flex items-center gap-3 mb-4">
+          <button
+            type="button"
+            onClick={() => app.goBack()}
+            className="p-2 rounded-xl hover:bg-gray-100 active:scale-95 transition-all text-gray-700 -ml-1 cursor-pointer relative z-10"
+            aria-label="Go back"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
           <h1 className="text-xl font-bold text-gray-900">Transaction History</h1>
         </div>
         <div className="flex gap-1 overflow-x-auto pb-0">

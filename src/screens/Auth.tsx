@@ -270,22 +270,20 @@ export function LoginScreen() {
       if (res.success && res.verified) {
         app.showToast('OTP Verified!', 'Mobile number verified successfully.', 'success');
 
-        if (flowMode === 'login') {
-          const loginRes = await api.login({ identifier: phone, password: '1234' }).catch(() => null);
-          if (loginRes && loginRes.success && loginRes.token) {
-            setAuthToken(loginRes.token);
+        if (res.token) {
+          setAuthToken(res.token);
+          await app.refreshLiveBackendData();
+          app.navigateRoot('home');
+        } else if (flowMode === 'login') {
+          const matchedUser = app.state.users.find(u => u.phone === phone);
+          if (matchedUser) {
+            app.switchDemoUser(matchedUser.id);
             await app.refreshLiveBackendData();
             app.navigateRoot('home');
           } else {
-            const matchedUser = app.state.users.find(u => u.phone === phone);
-            if (matchedUser) {
-              app.switchDemoUser(matchedUser.id);
-              app.navigateRoot('home');
-            } else {
-              setError('No registered account found for this number. Please create an account.');
-              setFlowMode('register');
-              setStep('user-type');
-            }
+            setError('No registered account found for this number. Please create an account.');
+            setFlowMode('register');
+            setStep('user-type');
           }
         } else {
           setStep('identity-verification');
