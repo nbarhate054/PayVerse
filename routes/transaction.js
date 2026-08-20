@@ -49,10 +49,10 @@ router.get('/history', authMiddleware, async (req, res) => {
       });
     } else {
       const userTxs = memoryTransactions.filter(t =>
-        t.senderId?._id === userId ||
-        t.senderId === userId ||
-        t.receiverId?._id === userId ||
-        t.receiverId === userId
+        t.senderId?._id === rawUserId ||
+        t.senderId === rawUserId ||
+        t.receiverId?._id === rawUserId ||
+        t.receiverId === rawUserId
       );
 
       return res.json({

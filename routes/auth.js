@@ -211,6 +211,8 @@ router.post('/register', async (req, res) => {
       });
       await wallet.save();
 
+      console.log(">>> USER INSERTED INTO ATLAS:", user._id);
+
       const token = generateToken(user);
       return res.status(201).json({
         success: true,

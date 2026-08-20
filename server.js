@@ -21,6 +21,10 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 const MONGODB_URI = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb+srv://payverse_admin:Payverse123@cluster0.pbs3sz9.mongodb.net/payverse?retryWrites=true&w=majority&appName=Cluster0';
 
+// Explicit Mongoose Connection Event Listeners
+mongoose.connection.on('connected', () => console.log('>>> CONNECTED TO MONGO ATLAS DB <<<'));
+mongoose.connection.on('error', (err) => console.error('>>> MONGO ATLAS CONNECTION ERROR:', err));
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -47,9 +51,8 @@ const connectDB = async () => {
     await mongoose.connect(MONGODB_URI, {
       serverSelectionTimeoutMS: 20000
     });
-    console.log('Connected to MongoDB Atlas successfully');
   } catch (err) {
-    console.error('❌ Failed to connect to MongoDB Atlas:', err.message);
+    console.error('>>> MONGO ATLAS CONNECTION ERROR:', err.message || err);
   }
 };
 
