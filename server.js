@@ -25,9 +25,21 @@ const MONGODB_URI = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb
 mongoose.connection.on('connected', () => console.log('>>> CONNECTED TO MONGO ATLAS DB <<<'));
 mongoose.connection.on('error', (err) => console.error('>>> MONGO ATLAS CONNECTION ERROR:', err));
 
-// Middleware
-app.use(cors());
+// Middleware - Explicit CORS configuration with pre-flight options handling
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+app.options(/.*/, cors());
+
 app.use(express.json());
+
+// Explicit JSON Content-Type middleware for API endpoints
+app.use('/api', (req, res, next) => {
+  res.setHeader('Content-Type', 'application/json');
+  next();
+});
 
 // Health Check
 app.get('/api/health', (req, res) => {

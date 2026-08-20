@@ -30,6 +30,11 @@ const userSchema = new mongoose.Schema({
     lowercase: true,
     trim: true
   },
+  pin: {
+    type: String,
+    default: '1234',
+    trim: true
+  },
   createdAt: {
     type: Date,
     default: Date.now
