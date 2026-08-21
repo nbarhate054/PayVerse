@@ -30,7 +30,7 @@ const findUserByIdentifier = async (identifier) => {
     conditions.push({ _id: raw });
   }
 
-  return await User.findOne({ $or: conditions });
+  return await User.findOne({ $or: conditions }).lean();
 };
 
 // GET /api/wallet/balance
@@ -46,7 +46,7 @@ router.get('/balance', authMiddleware, async (req, res) => {
         return res.json({ success: true, balance: 0, currency: 'INR' });
       }
 
-      let wallet = await Wallet.findOne({ userId });
+      let wallet = await Wallet.findOne({ userId }).lean();
       if (!wallet) {
         wallet = new Wallet({ userId, balance: 0, currency: 'INR' });
         await wallet.save();
@@ -83,8 +83,8 @@ export const handleTransfer = async (req, res) => {
   try {
     res.setHeader('Content-Type', 'application/json');
     const senderId = req.user?._id || req.user?.id || req.user?.userId || req.user?.payverseId || req.user?.phone || req.user?.email || req.body?.senderId || req.body?.userId || req.body?.sender;
-    const { amount, recipient, receiver: reqReceiver, receiverId, receiverPayverseId, receiverEmail, receiverPhone, to, phone: reqPhone, pin } = req.body || {};
-    const recipientInput = recipient || reqReceiver || receiverId || receiverPayverseId || receiverEmail || receiverPhone || reqPhone || to;
+    const { amount, recipient, receiver: reqReceiver, receiverId, receiverPayverseId, receiverEmail, receiverPhone, recipientId, recipientPhone, to, phone: reqPhone, pin } = req.body || {};
+    const recipientInput = recipientId || recipientPhone || recipient || reqReceiver || receiverId || receiverPayverseId || receiverEmail || receiverPhone || reqPhone || to;
     const numAmount = Number(amount);
 
     if (!recipientInput || !numAmount || isNaN(numAmount) || numAmount <= 0) {
@@ -121,26 +121,44 @@ export const handleTransfer = async (req, res) => {
         return res.status(400).json({ success: false, message: "Sender not found" });
       }
 
-      // Find recipient safely by payverseId, email, phone, name, or _id
+      // Find recipient safely by phone (recipientPhone or recipientInput), payverseId, email, name, or _id
       let recipientUser = null;
-      if (mongoose.isValidObjectId(recipientInput)) {
-        recipientUser = await User.findById(recipientInput);
+      const targetQuery = (recipientPhone || recipientInput || '').toString().trim();
+
+      if (targetQuery) {
+        const digitsOnly = targetQuery.replace(/\D/g, '');
+        const cleanLower = targetQuery.toLowerCase();
+
+        const conditions = [
+          { payverseId: cleanLower },
+          { payverseId: cleanLower.endsWith('@payverse') ? cleanLower : `${cleanLower}@payverse` },
+          { phone: targetQuery },
+          { phone: targetQuery.startsWith('+91') ? targetQuery : `+91${targetQuery}` },
+          { phone: targetQuery.replace(/^\+91/, '').trim() },
+          { email: cleanLower }
+        ];
+
+        if (digitsOnly && digitsOnly.length >= 10) {
+          const tenDigits = digitsOnly.slice(-10);
+          conditions.push({ phone: new RegExp(tenDigits + '$') });
+        }
+
+        if (mongoose.isValidObjectId(targetQuery)) {
+          conditions.push({ _id: targetQuery });
+        } else {
+          const escapedRec = targetQuery.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+          conditions.push({ name: new RegExp('^' + escapedRec + '$', 'i') });
+        }
+
+        recipientUser = await User.findOne({ $or: conditions });
       }
-      if (!recipientUser) {
-        const cleanRecStr = recipientInput.toString().trim();
-        const escapedRec = cleanRecStr.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        recipientUser = await findUserByIdentifier(recipientInput) || await User.findOne({
-          $or: [
-            { payverseId: cleanRecStr },
-            { email: cleanRecStr.toLowerCase() },
-            { phone: cleanRecStr },
-            { name: new RegExp('^' + escapedRec + '$', 'i') }
-          ]
-        });
+
+      if (!recipientUser && recipientInput) {
+        recipientUser = await findUserByIdentifier(recipientInput);
       }
 
       if (!recipientUser) {
-        return res.status(404).json({ success: false, message: "Recipient user not found" });
+        return res.status(404).json({ success: false, message: "No PayVerse account found with this recipient details." });
       }
 
       const receiver = recipientUser;
@@ -157,15 +175,21 @@ export const handleTransfer = async (req, res) => {
         await senderWallet.save();
       }
 
+      const senderName = sender?.name || req.user?.name || 'Sender';
+      const senderPhoneVal = sender?.phone || req.user?.phone || sender?.payverseId || 'Sender';
+
+      const recipientName = recipientUser.name || 'Recipient';
+      const recipientPhoneVal = recipientUser.phone || recipientUser.payverseId || 'Recipient';
+
       if (senderWallet.balance < numAmount) {
         const failedTx = new Transaction({
           userId: senderObjId,
           senderId: senderObjId,
           receiverId: recipientUser._id,
-          sender: sender?.phone || sender?.payverseId || 'Sender',
-          senderName: sender?.name || 'Sender',
-          recipient: recipientUser.phone || recipientUser.payverseId || 'Recipient',
-          recipientName: recipientUser.name || 'Recipient',
+          sender: senderPhoneVal,
+          senderName: senderName,
+          recipient: recipientPhoneVal,
+          recipientName: recipientName,
           amount: numAmount,
           type: 'transfer',
           status: 'failed',
@@ -197,15 +221,15 @@ export const handleTransfer = async (req, res) => {
         userId: senderObjId,
         senderId: senderObjId,
         receiverId: recipientUser._id,
-        sender: sender?.phone || sender?.payverseId || 'Sender',
-        senderName: sender?.name || 'Sender',
-        recipient: recipientUser.phone || recipientUser.payverseId || 'Recipient',
-        recipientName: recipientUser.name || 'Recipient',
+        sender: senderPhoneVal,
+        senderName: senderName,
+        recipient: recipientPhoneVal,
+        recipientName: recipientName,
         amount: numAmount,
         type: 'transfer',
         status: 'completed',
-        title: `Sent to ${recipientUser.name}`,
-        description: `Transferred ₹${numAmount} to ${recipientUser.name}`,
+        title: `Sent to ${recipientName}`,
+        description: `Transferred ₹${numAmount} to ${recipientName}`,
         timestamp: new Date()
       });
       await tx.save();
@@ -217,7 +241,7 @@ export const handleTransfer = async (req, res) => {
 
       return res.status(200).json({
         success: true,
-        message: `₹${numAmount} transferred successfully to ${recipientUser.name}`,
+        message: `₹${numAmount} transferred successfully to ${recipientName}`,
         balance: senderWallet.balance,
         newBalance: senderWallet.balance,
         transaction: populatedTx || tx
@@ -230,7 +254,7 @@ export const handleTransfer = async (req, res) => {
         memoryWallets.push(senderWallet);
       }
 
-      const cleanRec = recipientInput.toString().trim().toLowerCase();
+      const cleanRec = (recipientInput || '').toString().trim().toLowerCase();
       let recipientUser = memoryUsers.find(u =>
         u._id === recipientInput ||
         u.id === recipientInput ||
@@ -243,7 +267,7 @@ export const handleTransfer = async (req, res) => {
       );
 
       if (!recipientUser) {
-        recipientUser = { _id: 'rec_demo', id: cleanRec || 'demo@payverse', name: cleanRec || 'Recipient', payverseId: cleanRec || 'demo@payverse' };
+        recipientUser = { _id: 'rec_demo', id: cleanRec || 'demo@payverse', name: cleanRec || 'Recipient', payverseId: cleanRec || 'demo@payverse', phone: recipientPhone || '9975342924' };
       }
       const receiver = recipientUser;
       const receiverUser = recipientUser;

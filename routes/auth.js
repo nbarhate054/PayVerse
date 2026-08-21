@@ -13,6 +13,12 @@ export const memoryUsers = [];
 export const memoryWallets = [];
 export const otpStore = new Map();
 
+// Helper for strict phone normalization (always 10 digits)
+export const normalizePhone = (phone) => {
+  if (!phone) return '';
+  return phone.toString().replace(/[^0-9]/g, '').slice(-10);
+};
+
 const generateToken = (user) => {
   return jwt.sign(
     {
@@ -203,7 +209,7 @@ router.post('/register', async (req, res) => {
 
     const cleanName = name.trim();
     const cleanEmail = email.trim().toLowerCase();
-    const cleanPhone = phone.trim();
+    const cleanPhone = normalizePhone(phone);
     const defaultPin = pin || '1234';
 
     let baseId = requestedPayverseId
@@ -220,7 +226,8 @@ router.post('/register', async (req, res) => {
       let existingUser = await User.findOne({
         $or: [
           { email: cleanEmail },
-          { phone: cleanPhone }
+          { phone: cleanPhone },
+          { phone: `+91${cleanPhone}` }
         ]
       });
 
@@ -235,7 +242,7 @@ router.post('/register', async (req, res) => {
           success: true,
           message: 'User already registered. Logged in successfully.',
           token,
-          user: existingUser,
+          user: { _id: existingUser._id, id: existingUser.payverseId || existingUser._id, name: existingUser.name, email: existingUser.email, phone: existingUser.phone, payverseId: existingUser.payverseId, pin: existingUser.pin || '1234' },
           wallet: existingWallet
         });
       }
@@ -271,7 +278,7 @@ router.post('/register', async (req, res) => {
         success: true,
         message: 'User registered successfully',
         token,
-        user: user,
+        user: { _id: user._id, id: user.payverseId || user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, pin: user.pin || '1234' },
         wallet: { balance: wallet.balance, currency: wallet.currency }
       });
     } else {
@@ -293,7 +300,7 @@ router.post('/register', async (req, res) => {
         success: true,
         message: 'User registered successfully',
         token,
-        user: user,
+        user: { _id: user._id || user.id, id: user.payverseId || user._id || user.id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, pin: user.pin || '1234' },
         wallet: { balance: wallet.balance, currency: wallet.currency }
       });
     }
@@ -318,11 +325,14 @@ router.post('/login', async (req, res) => {
     }
 
     const cleanId = loginId.trim().toLowerCase();
+    const normPhone = normalizePhone(loginId);
 
     if (mongoose.connection.readyState === 1) {
       const user = await User.findOne({
         $or: [
           { email: cleanId },
+          { phone: normPhone },
+          { phone: `+91${normPhone}` },
           { phone: loginId.trim() },
           { payverseId: cleanId }
         ]
@@ -344,7 +354,7 @@ router.post('/login', async (req, res) => {
         success: true,
         message: 'Logged in successfully',
         token,
-        user: { id: user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, createdAt: user.createdAt },
+        user: { _id: user._id, id: user.payverseId || user._id, name: user.name, email: user.email, phone: user.phone, payverseId: user.payverseId, pin: user.pin || '1234', createdAt: user.createdAt },
         wallet: { balance: wallet.balance, currency: wallet.currency }
       });
     } else {

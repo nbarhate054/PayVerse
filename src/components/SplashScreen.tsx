@@ -6,7 +6,7 @@ interface SplashScreenProps {
   duration?: number; // in milliseconds
 }
 
-export default function SplashScreen({ onFinish, duration = 1800 }: SplashScreenProps) {
+export default function SplashScreen({ onFinish, duration = 600 }: SplashScreenProps) {
   const [fadingOut, setFadingOut] = useState(false);
   const [hidden, setHidden] = useState(false);
 
@@ -14,7 +14,7 @@ export default function SplashScreen({ onFinish, duration = 1800 }: SplashScreen
     // Start fade-out animation near end of duration
     const fadeTimer = setTimeout(() => {
       setFadingOut(true);
-    }, duration - 400);
+    }, Math.max(100, duration - 200));
 
     // Hide completely and notify parent
     const hideTimer = setTimeout(() => {

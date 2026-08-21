@@ -248,20 +248,30 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!token) return;
     setIsLoadingData(true);
     try {
-      const meRes = await api.getMe();
+      // Execute all 3 backend API calls concurrently in parallel
+      const [meRes, usersRes, historyRes] = await Promise.all([
+        api.getMe().catch(() => ({ success: false, user: null, wallet: null })),
+        api.getUsers().catch(() => ({ success: false, users: [] })),
+        api.getTransactionHistory().catch(() => ({ success: false, transactions: [] })),
+      ]);
+
       if (meRes.success && meRes.user) {
         const userObj: User = {
           id: meRes.user.payverseId || meRes.user.id,
           name: meRes.user.name,
           email: meRes.user.email,
           phone: meRes.user.phone,
+          payverseId: meRes.user.payverseId,
           balance: meRes.wallet?.balance ?? 0,
-          pin: '1234',
+          pin: meRes.user.pin || '1234',
           isOnboarded: true,
           onboardingStatus: 'completed',
         };
 
-        const usersRes = await api.getUsers();
+        try {
+          localStorage.setItem('payverse_user', JSON.stringify(userObj));
+        } catch {}
+
         let otherUsers: User[] = [];
         if (usersRes.success && Array.isArray(usersRes.users)) {
           otherUsers = usersRes.users.map((u: any) => ({
@@ -275,7 +285,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }));
         }
 
-        const historyRes = await api.getTransactionHistory();
         let backendTxs: Transaction[] = [];
         if (historyRes.success && Array.isArray(historyRes.transactions)) {
           backendTxs = historyRes.transactions.map(mapBackendTxToFrontend);
@@ -488,7 +497,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const sender = s.users.find(u => u.id === s.currentUserId);
       if (!sender) return { success: false, error: 'Not logged in' };
 
-      const { receiverId, amount, pin } = params;
+      const { receiverId, amount, note, pin } = params;
 
       if (isLocked()) {
         return { success: false, error: 'PIN temporarily locked. Try again in 30 seconds.' };
@@ -513,15 +522,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         } catch {}
       }
 
+      const receiverObj = s.users.find(u => u.id === receiverId || u.payverseId === receiverId || u.name?.toLowerCase() === receiverId.toLowerCase() || u.phone === receiverId);
+      const targetRecipient = receiverObj?.payverseId || receiverObj?.phone || receiverObj?.email || receiverObj?.id || receiverId;
+
       // 2. Execute Transfer via API
       try {
-        const receiverObj = s.users.find(u => u.id === receiverId || u.payverseId === receiverId || u.name?.toLowerCase() === receiverId.toLowerCase());
-        const targetRecipient = receiverObj?.payverseId || receiverObj?.phone || receiverObj?.email || receiverObj?.id || receiverId;
-
         const res = await api.transfer({
-          senderId: sender.id,
-          sender: sender.id,
           recipient: targetRecipient,
+          recipientId: receiverObj?.id || receiverId,
+          recipientPhone: receiverObj?.phone || (receiverId.match(/^\d{10}$/) ? receiverId : undefined),
           receiver: targetRecipient,
           receiverPayverseId: targetRecipient,
           receiverId: receiverObj?.id || targetRecipient,
@@ -609,7 +618,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           senderId: sender.id,
           receiverId: receiverId,
           senderName: sender.name,
-          receiverName: senderId,
+          receiverName: receiverObj?.name || receiverId,
           amount,
           type: 'P2P_TRANSFER',
           status: 'SUCCESS',

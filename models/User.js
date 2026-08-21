@@ -41,6 +41,8 @@ const userSchema = new mongoose.Schema({
   }
 });
 
+userSchema.index({ phone: 1, email: 1, payverseId: 1 });
+
 const User = mongoose.models.User || mongoose.model('User', userSchema);
 
 export default User;

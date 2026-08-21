@@ -105,7 +105,7 @@ export function LoginScreen() {
       }
       if (currentUser.kycVerified) setKycVerified(true);
       if (currentUser.kycIdMasked) setMaskedAadhaar(currentUser.kycIdMasked);
-      
+
       // Resume from last uncompleted step
       if (!currentUser.kycVerified) {
         setStep('identity-verification');
@@ -554,13 +554,12 @@ export function LoginScreen() {
                     if (e.key === 'Backspace' && !otp[i] && i > 0) refs[i - 1]?.focus();
                   }}
                   autoFocus={i === 0}
-                  className={`w-14 h-16 text-center text-2xl font-black rounded-2xl border-2 focus:outline-none transition-all shadow-sm ${
-                    error
-                      ? 'border-red-400 bg-red-50 text-red-600'
-                      : digit
+                  className={`w-14 h-16 text-center text-2xl font-black rounded-2xl border-2 focus:outline-none transition-all shadow-sm ${error
+                    ? 'border-red-400 bg-red-50 text-red-600'
+                    : digit
                       ? 'border-blue-600 bg-blue-50 text-blue-700 scale-105 shadow-blue-100'
                       : 'border-gray-200 bg-white text-gray-900 focus:border-blue-500'
-                  }`}
+                    }`}
                 />
               ))}
             </div>
@@ -631,11 +630,10 @@ export function LoginScreen() {
               {/* Teen Option */}
               <button
                 onClick={() => setUserType('teen')}
-                className={`w-full p-5 rounded-3xl border-2 text-left transition-all flex items-center justify-between ${
-                  userType === 'teen'
-                    ? 'border-blue-600 bg-blue-50/60 shadow-md ring-2 ring-blue-500/20'
-                    : 'border-gray-200 bg-white hover:border-gray-300'
-                }`}
+                className={`w-full p-5 rounded-3xl border-2 text-left transition-all flex items-center justify-between ${userType === 'teen'
+                  ? 'border-blue-600 bg-blue-50/60 shadow-md ring-2 ring-blue-500/20'
+                  : 'border-gray-200 bg-white hover:border-gray-300'
+                  }`}
               >
                 <div className="flex items-center gap-4">
                   <div className="w-14 h-14 rounded-2xl bg-blue-600 text-white flex items-center justify-center text-2xl shadow-sm">
@@ -655,11 +653,10 @@ export function LoginScreen() {
               {/* Adult Option */}
               <button
                 onClick={() => setUserType('adult')}
-                className={`w-full p-5 rounded-3xl border-2 text-left transition-all flex items-center justify-between ${
-                  userType === 'adult'
-                    ? 'border-blue-600 bg-blue-50/60 shadow-md ring-2 ring-blue-500/20'
-                    : 'border-gray-200 bg-white hover:border-gray-300'
-                }`}
+                className={`w-full p-5 rounded-3xl border-2 text-left transition-all flex items-center justify-between ${userType === 'adult'
+                  ? 'border-blue-600 bg-blue-50/60 shadow-md ring-2 ring-blue-500/20'
+                  : 'border-gray-200 bg-white hover:border-gray-300'
+                  }`}
               >
                 <div className="flex items-center gap-4">
                   <div className="w-14 h-14 rounded-2xl bg-indigo-600 text-white flex items-center justify-center text-2xl shadow-sm">
@@ -751,11 +748,10 @@ export function LoginScreen() {
                       key={avatar}
                       type="button"
                       onClick={() => setProfilePhoto(avatar)}
-                      className={`w-11 h-11 rounded-2xl text-xl flex items-center justify-center border-2 transition-all ${
-                        profilePhoto === avatar
-                          ? 'border-blue-600 bg-blue-50 scale-105 shadow-sm'
-                          : 'border-gray-200 bg-gray-50 hover:border-gray-300'
-                      }`}
+                      className={`w-11 h-11 rounded-2xl text-xl flex items-center justify-center border-2 transition-all ${profilePhoto === avatar
+                        ? 'border-blue-600 bg-blue-50 scale-105 shadow-sm'
+                        : 'border-gray-200 bg-gray-50 hover:border-gray-300'
+                        }`}
                     >
                       {avatar}
                     </button>
@@ -863,13 +859,12 @@ export function LoginScreen() {
                     if (e.key === 'Backspace' && !otp[i] && i > 0) refs[i - 1]?.focus();
                   }}
                   autoFocus={i === 0}
-                  className={`w-14 h-16 text-center text-2xl font-black rounded-2xl border-2 focus:outline-none transition-all shadow-sm ${
-                    error
-                      ? 'border-red-400 bg-red-50 text-red-600'
-                      : digit
+                  className={`w-14 h-16 text-center text-2xl font-black rounded-2xl border-2 focus:outline-none transition-all shadow-sm ${error
+                    ? 'border-red-400 bg-red-50 text-red-600'
+                    : digit
                       ? 'border-blue-600 bg-blue-50 text-blue-700 scale-105 shadow-blue-100'
                       : 'border-gray-200 bg-white text-gray-900 focus:border-blue-500'
-                  }`}
+                    }`}
                 />
               ))}
             </div>
@@ -1091,11 +1086,10 @@ export function LoginScreen() {
                 <button
                   key={opt.key}
                   onClick={() => setHasPocketMoney(opt.key as any)}
-                  className={`p-4 rounded-2xl border-2 font-bold text-xs transition-all ${
-                    hasPocketMoney === opt.key
-                      ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm'
-                      : 'border-gray-200 text-gray-700 hover:border-gray-300'
-                  }`}
+                  className={`p-4 rounded-2xl border-2 font-bold text-xs transition-all ${hasPocketMoney === opt.key
+                    ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm'
+                    : 'border-gray-200 text-gray-700 hover:border-gray-300'
+                    }`}
                 >
                   {opt.label}
                 </button>
@@ -1110,11 +1104,10 @@ export function LoginScreen() {
                     <button
                       key={range}
                       onClick={() => setPocketMoneyRange(range)}
-                      className={`p-3.5 rounded-2xl border-2 font-bold text-xs text-left transition-all ${
-                        pocketMoneyRange === range
-                          ? 'border-blue-600 bg-blue-50 text-blue-700'
-                          : 'border-gray-200 text-gray-700 hover:border-gray-300'
-                      }`}
+                      className={`p-3.5 rounded-2xl border-2 font-bold text-xs text-left transition-all ${pocketMoneyRange === range
+                        ? 'border-blue-600 bg-blue-50 text-blue-700'
+                        : 'border-gray-200 text-gray-700 hover:border-gray-300'
+                        }`}
                     >
                       {range}
                     </button>
@@ -1164,11 +1157,10 @@ export function LoginScreen() {
                   <button
                     key={p}
                     onClick={() => togglePurpose(p)}
-                    className={`px-4 py-3 rounded-2xl border-2 font-bold text-xs transition-all flex items-center gap-2 ${
-                      isSelected
-                        ? 'border-blue-600 bg-blue-600 text-white shadow-md'
-                        : 'border-gray-200 text-gray-700 bg-white hover:border-gray-300'
-                    }`}
+                    className={`px-4 py-3 rounded-2xl border-2 font-bold text-xs transition-all flex items-center gap-2 ${isSelected
+                      ? 'border-blue-600 bg-blue-600 text-white shadow-md'
+                      : 'border-gray-200 text-gray-700 bg-white hover:border-gray-300'
+                      }`}
                   >
                     <span>{p}</span>
                     {isSelected && <IconCheck size={14} className="text-white" />}

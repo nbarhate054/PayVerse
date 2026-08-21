@@ -1,8 +1,9 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context';
 import type { User } from '../store';
 import { fmt, initials, avatarColor } from '../utils';
 import PINInput from '../components/PINInput';
+import { api } from '../services/api';
 
 type Step = 'search' | 'amount' | 'confirm' | 'pin' | 'processing' | 'success';
 
@@ -18,12 +19,79 @@ export default function SendMoneyScreen() {
   const [txId, setTxId] = useState('');
   const processingRef = useRef(false);
 
+  useEffect(() => {
+    const params = app.currentScreen.params;
+    if (params) {
+      if (params.recipientName && (params.recipientId || params.recipientPhone)) {
+        const u: User = {
+          id: params.recipientId || params.recipientPhone,
+          name: params.recipientName,
+          phone: params.recipientPhone || params.recipientId,
+          balance: 0,
+          pin: '1234',
+          isOnboarded: true,
+          onboardingStatus: 'completed'
+        };
+        setRecipient(u);
+        setStep('amount');
+      } else if (params.phone || params.query) {
+        const q = (params.phone || params.query).trim();
+        if (q) {
+          api.findUser(q).then(res => {
+            if (res && res.success && res.user) {
+              const u: User = {
+                id: res.user.payverseId || res.user._id || res.user.phone,
+                name: res.user.name,
+                phone: res.user.phone,
+                payverseId: res.user.payverseId,
+                balance: 0,
+                pin: '1234',
+                isOnboarded: true,
+                onboardingStatus: 'completed'
+              };
+              setRecipient(u);
+              setStep('amount');
+            }
+          }).catch(() => {});
+        }
+      }
+    }
+  }, [app.currentScreen]);
+
   const results = app.searchUsers(query);
 
   const handleSelectRecipient = (u: User) => {
     setRecipient(u);
     setStep('amount');
     setQuery('');
+  };
+
+  const handleSearchSubmit = async () => {
+    if (!query.trim()) return;
+    const cleanQuery = query.trim();
+
+    if (results.length > 0) {
+      handleSelectRecipient(results[0]);
+      return;
+    }
+
+    try {
+      const res = await api.findUser(cleanQuery);
+      if (res && res.success && res.user) {
+        const u = res.user;
+        const recipientUser: User = {
+          id: u.payverseId || u._id || u.phone,
+          name: u.name,
+          phone: u.phone,
+          payverseId: u.payverseId,
+          balance: 0,
+          pin: '1234',
+          isOnboarded: true,
+          onboardingStatus: 'completed',
+        };
+        handleSelectRecipient(recipientUser);
+      }
+    } catch {}
   };
 
   const handleAmountNext = () => {
@@ -41,7 +109,7 @@ export default function SendMoneyScreen() {
 
     try {
       const result = await app.sendMoney({
-        receiverId: recipient!.id,
+        receiverId: recipient!.phone || recipient!.id,
         amount: parseFloat(amount),
         note,
         pin,
@@ -110,7 +178,7 @@ export default function SendMoneyScreen() {
           <div className="w-full mt-8 bg-gray-50 rounded-2xl p-4 animate-fade-slide-up space-y-3">
             {[
               { label: 'Transaction ID', value: txId },
-              { label: 'Sent to', value: `${recipient?.name} (${recipient?.id})` },
+              { label: 'Sent to', value: `${recipient?.name} (+91 ${recipient?.phone || recipient?.id})` },
               { label: 'New Balance', value: fmt(user.balance) },
               { label: 'Note', value: note || '—' },
             ].map(({ label, value }) => (
@@ -159,25 +227,26 @@ export default function SendMoneyScreen() {
 
       {/* Search step */}
       {step === 'search' && (
-        <div className="flex-1 overflow-y-auto px-4 py-4 w-full max-w-full box-border mx-auto">
-          <div className="relative mb-4 w-full max-w-full box-border">
+        <div className="flex-1 overflow-y-auto px-4 py-4 w-full max-w-full box-border mx-auto space-y-4">
+          <div className="relative w-full max-w-full box-border">
             <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
             <input
               type="text"
-              placeholder="Search name, PayVerse ID, or mobile"
+              placeholder="Search name, 10-digit mobile, or PayVerse ID..."
               value={query}
               onChange={e => setQuery(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSearchSubmit()}
+              className="w-full pl-10 pr-4 py-3.5 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm font-semibold text-gray-900 box-border shadow-xs"
               autoFocus
-              className="w-full pl-10 pr-4 py-3.5 border border-gray-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white text-sm box-border"
             />
           </div>
 
           {query === '' ? (
             <div className="w-full max-w-full box-border">
               <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">All Contacts</p>
-              <div className="bg-white rounded-2xl overflow-hidden border border-gray-100 w-full max-w-full box-border">
+              <div className="bg-white rounded-2xl overflow-hidden border border-gray-100 w-full max-w-full box-border shadow-xs">
                 {app.state.users.filter(u => u.id !== app.state.currentUserId).map((u, i, arr) => (
                   <UserRow key={u.id} user={u} onSelect={handleSelectRecipient} last={i === arr.length - 1} />
                 ))}
@@ -186,15 +255,21 @@ export default function SendMoneyScreen() {
           ) : results.length > 0 ? (
             <div className="w-full max-w-full box-border">
               <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">{results.length} result{results.length > 1 ? 's' : ''}</p>
-              <div className="bg-white rounded-2xl overflow-hidden border border-gray-100 w-full max-w-full box-border">
+              <div className="bg-white rounded-2xl overflow-hidden border border-gray-100 w-full max-w-full box-border shadow-xs">
                 {results.map((u, i) => <UserRow key={u.id} user={u} onSelect={handleSelectRecipient} last={i === results.length - 1} />)}
               </div>
             </div>
           ) : (
-            <div className="text-center py-12 w-full max-w-full box-border">
-              <div className="text-4xl mb-3">🔍</div>
-              <p className="text-gray-500 font-medium">No users found</p>
-              <p className="text-gray-400 text-sm mt-1">Try searching by name or PayVerse ID</p>
+            <div className="text-center py-10 px-4 bg-white rounded-2xl border border-gray-100 w-full max-w-full box-border shadow-xs">
+              <div className="text-4xl mb-2">🔍</div>
+              <p className="text-gray-800 font-bold text-sm">No local contacts found</p>
+              <p className="text-gray-400 text-xs mt-1 mb-4">Search PayVerse network for recipient</p>
+              <button
+                onClick={handleSearchSubmit}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-5 py-3 rounded-xl shadow-md shadow-blue-200 active:scale-95 transition-all cursor-pointer"
+              >
+                Search PayVerse Network →
+              </button>
             </div>
           )}
         </div>
@@ -203,15 +278,29 @@ export default function SendMoneyScreen() {
       {/* Amount step */}
       {step === 'amount' && recipient && (
         <div className="flex-1 overflow-y-auto px-4 py-4 w-full max-w-full box-border mx-auto">
-          <div className="bg-white rounded-2xl p-4 flex items-center gap-3 mb-6 border border-gray-100 shadow-sm w-full max-w-full box-border">
-            <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${avatarColor(recipient.name)} flex items-center justify-center flex-shrink-0`}>
-              <span className="text-white font-bold">{initials(recipient.name)}</span>
+          <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm mb-6 w-full max-w-full box-border">
+            <div className="flex items-center gap-3">
+              <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br ${avatarColor(recipient.name)} flex items-center justify-center flex-shrink-0 relative`}>
+                <span className="text-white font-bold">{initials(recipient.name)}</span>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-bold text-gray-900 text-base truncate">{recipient.name}</p>
+                  <span className="inline-flex items-center gap-1 bg-green-100 text-green-800 border border-green-300 px-2.5 py-0.5 rounded-full text-xs font-bold shadow-xs">
+                    <svg className="w-3.5 h-3.5 text-green-600" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1.001 1.001 0 00-1.414-1.414L9 10.586 7.707 9.293a1.001 1.001 0 00-1.414 1.414l2 2a1.001 1.001 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    Verified
+                  </span>
+                </div>
+                <p className="text-green-700 text-xs font-medium truncate mt-1">
+                  Sending to: <strong className="font-bold text-gray-900">{recipient.name}</strong> (+91 {recipient.phone || recipient.id})
+                </p>
+              </div>
+              <button onClick={() => setStep('search')} className="ml-auto text-blue-600 text-sm font-semibold hover:underline flex-shrink-0">
+                Change
+              </button>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-semibold text-gray-900 truncate">{recipient.name}</p>
-              <p className="text-gray-400 text-xs truncate">{recipient.id}</p>
-            </div>
-            <button onClick={() => setStep('search')} className="ml-auto text-blue-600 text-sm font-medium flex-shrink-0">Change</button>
           </div>
 
           <div className="bg-white rounded-2xl p-6 border border-gray-100 mb-4 w-full max-w-full box-border">

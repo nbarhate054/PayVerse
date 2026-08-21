@@ -269,6 +269,20 @@ export const api = {
     }
   },
 
+  findUser: async (query: string) => {
+    const token = getAuthToken();
+    if (!token) return { success: false, message: 'No auth token found' };
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/users/find?query=${encodeURIComponent(query)}`, {
+        method: 'GET',
+        headers: getHeaders(true),
+      });
+      return await handleResponse(response);
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Error looking up user' };
+    }
+  },
+
   // Wallet API
   getBalance: async () => {
     const token = getAuthToken();
@@ -289,7 +303,7 @@ export const api = {
     }
   },
 
-  transfer: async (data: { recipient?: string; receiver?: string; receiverId?: string; receiverPayverseId?: string; receiverEmail?: string; receiverPhone?: string; amount: number; pin?: string }) => {
+  transfer: async (data: { recipient?: string; recipientId?: string; recipientPhone?: string; receiver?: string; receiverId?: string; receiverPayverseId?: string; receiverEmail?: string; receiverPhone?: string; amount: number; pin?: string }) => {
     const token = getAuthToken();
     if (!token) {
       if (typeof window !== 'undefined') {
@@ -298,12 +312,14 @@ export const api = {
       return { success: false, message: 'Access denied. No token provided.' };
     }
     try {
-      const recipientTarget = data.recipient || data.receiver || data.receiverPayverseId || data.receiverId;
+      const recipientTarget = data.recipientId || data.recipientPhone || data.recipient || data.receiver || data.receiverPayverseId || data.receiverId;
       const response = await fetch(`${getApiBaseUrl()}/wallet/transfer`, {
         method: 'POST',
         headers: getHeaders(true),
         body: JSON.stringify({
           ...data,
+          recipientId: data.recipientId || recipientTarget,
+          recipientPhone: data.recipientPhone,
           recipient: recipientTarget,
           receiver: recipientTarget,
           receiverId: data.receiverId || recipientTarget,

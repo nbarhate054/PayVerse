@@ -5,6 +5,7 @@ export interface User {
   name: string;
   email?: string;
   phone: string;
+  payverseId?: string;
   balance: number;
   pin: string;
   userType?: 'teen' | 'adult';

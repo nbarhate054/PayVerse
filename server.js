@@ -14,6 +14,7 @@ try {
 import authRoutes from './routes/auth.js';
 import walletRoutes from './routes/wallet.js';
 import transactionRoutes from './routes/transaction.js';
+import userRoutes from './routes/users.js';
 
 dotenv.config();
 
@@ -53,6 +54,7 @@ app.get('/api/health', (req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/transactions', transactionRoutes);
 

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useApp } from '../context';
 import { initials, avatarColor } from '../utils';
+import MyQRModal from '../components/MyQRModal';
 import {
   IconUsers, IconLock, IconBell, IconShield, IconHelpCircle,
   IconInfo, IconRefresh, IconLogOut, IconChevronRight, IconArrowLeft
@@ -21,6 +22,7 @@ export default function ProfileScreen() {
   const user = app.getCurrentUser();
   const [showReset, setShowReset] = useState(false);
   const [showLogout, setShowLogout] = useState(false);
+  const [showMyQR, setShowMyQR] = useState(false);
   const [activeModal, setActiveModal] = useState<'privacy' | 'security' | 'help' | 'about' | 'parent' | null>(null);
 
   if (!user) return null;
@@ -37,8 +39,9 @@ export default function ProfileScreen() {
       ],
     },
     {
-      title: 'Wallet Security',
+      title: 'Wallet & QR',
       items: [
+        { icon: <span className="text-base">📱</span>, label: 'My PayVerse QR', sub: 'Display & share your personal QR code', action: () => setShowMyQR(true), chevron: true, badge: 'QR' },
         { icon: <IconLock size={20} className="text-blue-600" />, label: 'PayVerse PIN', sub: 'Change your 4-digit PIN', action: () => app.navigate('change-pin'), chevron: true },
         { icon: <IconBell size={20} className="text-blue-600" />, label: 'Notifications', sub: 'Manage transaction alerts', action: () => app.navigate('notifications'), chevron: true },
       ],
@@ -186,6 +189,13 @@ export default function ProfileScreen() {
           </div>
         </div>
       )}
+
+      {/* My QR Modal */}
+      <MyQRModal
+        user={user}
+        isOpen={showMyQR}
+        onClose={() => setShowMyQR(false)}
+      />
     </div>
   );
 }

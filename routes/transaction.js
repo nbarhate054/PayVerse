@@ -57,7 +57,8 @@ const handleGetTransactions = async (req, res) => {
       const transactions = await Transaction.find(orConditions.length > 0 ? { $or: orConditions } : {})
         .sort({ createdAt: -1, timestamp: -1 })
         .populate('senderId', 'name email phone payverseId')
-        .populate('receiverId', 'name email phone payverseId');
+        .populate('receiverId', 'name email phone payverseId')
+        .lean();
 
       return res.status(200).json({
         success: true,

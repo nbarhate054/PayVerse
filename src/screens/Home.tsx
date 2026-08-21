@@ -3,6 +3,8 @@ import { useApp } from '../context';
 import type { ScreenName } from '../context';
 import { fmt, initials, avatarColor, fmtTime } from '../utils';
 import logoSvg from '../assets/logo.svg';
+import MyQRModal from '../components/MyQRModal';
+import ScanPayModal from '../components/ScanPayModal';
 import {
   IconBell, IconScan, IconSend, IconReceive, IconPlusCircle,
   IconEye, IconEyeOff, IconHeadphones, IconGamepad, IconTrophy,
@@ -17,6 +19,8 @@ export default function HomeScreen() {
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [showRewards, setShowRewards] = useState(false);
   const [showCreateGoal, setShowCreateGoal] = useState(false);
+  const [showMyQR, setShowMyQR] = useState(false);
+  const [showScanPay, setShowScanPay] = useState(false);
   const [newGoalName, setNewGoalName] = useState('');
   const [newGoalTarget, setNewGoalTarget] = useState('');
 
@@ -103,6 +107,15 @@ export default function HomeScreen() {
           />
         </div>
         <div className="flex items-center gap-2">
+          {/* My QR Button */}
+          <button
+            onClick={() => setShowMyQR(true)}
+            className="p-2 px-3 rounded-2xl bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs flex items-center gap-1.5 transition-colors border border-blue-100/80 active:scale-95"
+            title="My QR Code"
+          >
+            <span className="text-sm">📱</span>
+            <span>My QR</span>
+          </button>
           {/* Notification Bell */}
           <button onClick={() => app.navigate('notifications')} className="relative p-2.5 rounded-2xl bg-slate-100 hover:bg-slate-200 transition-colors">
             <IconBell size={20} className="text-slate-700" />
@@ -155,7 +168,13 @@ export default function HomeScreen() {
           {quickActions.map(({ icon, label, color, screen }) => (
             <button
               key={screen}
-              onClick={() => app.navigate(screen)}
+              onClick={() => {
+                if (screen === 'qr-pay') {
+                  setShowScanPay(true);
+                } else {
+                  app.navigate(screen);
+                }
+              }}
               className="flex flex-col items-center gap-1.5 active:scale-95 transition-transform"
             >
               <div className={`w-14 h-14 ${color} rounded-2xl flex items-center justify-center shadow-md`}>
@@ -564,6 +583,26 @@ export default function HomeScreen() {
           </div>
         </div>
       )}
+
+      {/* QR Modals */}
+      <MyQRModal
+        user={user}
+        isOpen={showMyQR}
+        onClose={() => setShowMyQR(false)}
+      />
+
+      <ScanPayModal
+        isOpen={showScanPay}
+        onClose={() => setShowScanPay(false)}
+        onSuccess={(rec) => {
+          setShowScanPay(false);
+          app.navigate('send-money', {
+            recipientId: rec.payverseId || rec.id,
+            recipientName: rec.name,
+            recipientPhone: rec.phone,
+          });
+        }}
+      />
     </div>
   );
 }
