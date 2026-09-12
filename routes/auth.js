@@ -35,9 +35,26 @@ const generateToken = (user) => {
 // GET /api/auth/users
 router.get('/users', authMiddleware, async (req, res) => {
   try {
-    const currentUserId = req.user.userId;
+    const currentUserId = req.user.userId || req.user._id;
+    const searchQuery = (req.query.search || req.query.query || '').toString().trim();
+
     if (mongoose.connection.readyState === 1) {
-      const users = await User.find({ _id: { $ne: currentUserId } }).select('-password');
+      const filter = {};
+      if (currentUserId && mongoose.isValidObjectId(currentUserId)) {
+        filter._id = { $ne: currentUserId };
+      }
+      if (searchQuery) {
+        const esc = searchQuery.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+        filter.$or = [
+          { name: new RegExp(esc, 'i') },
+          { payverseId: new RegExp(esc, 'i') },
+          { phone: new RegExp(esc, 'i') },
+          { email: new RegExp(esc, 'i') },
+        ];
+      }
+
+      const users = await User.find(filter).select('-password').sort({ createdAt: -1 });
+
       return res.json({
         success: true,
         users: users.map(u => ({
@@ -46,11 +63,26 @@ router.get('/users', authMiddleware, async (req, res) => {
           name: u.name,
           email: u.email,
           phone: u.phone,
-          payverseId: u.payverseId
+          payverseId: u.payverseId,
+          createdAt: u.createdAt
         }))
       });
     } else {
-      const users = memoryUsers.filter(u => (u._id || u.id) !== currentUserId);
+      let users = memoryUsers.filter(u => {
+        const uId = (u._id || u.id || '').toString();
+        if (currentUserId && uId === currentUserId.toString()) return false;
+        if (!searchQuery) return true;
+        const sLower = searchQuery.toLowerCase();
+        return (
+          (u.name || '').toLowerCase().includes(sLower) ||
+          (u.payverseId || '').toLowerCase().includes(sLower) ||
+          (u.phone || '').includes(searchQuery) ||
+          (u.email || '').toLowerCase().includes(sLower)
+        );
+      });
+
+      users.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
       return res.json({
         success: true,
         users: users.map(u => ({
@@ -59,12 +91,66 @@ router.get('/users', authMiddleware, async (req, res) => {
           name: u.name,
           email: u.email,
           phone: u.phone,
-          payverseId: u.payverseId
+          payverseId: u.payverseId,
+          createdAt: u.createdAt
         }))
       });
     }
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// POST /api/auth/check-user
+router.post('/check-user', async (req, res) => {
+  try {
+    res.setHeader('Content-Type', 'application/json');
+    const { phone } = req.body || {};
+    if (!phone) {
+      return res.status(400).json({ success: false, exists: false, message: 'Phone is required.' });
+    }
+    const cleanPhone = normalizePhone(phone);
+    if (mongoose.connection.readyState === 1) {
+      const user = await User.findOne({
+        $or: [
+          { phone: cleanPhone },
+          { phone: `+91${cleanPhone}` }
+        ]
+      }).select('-password');
+      if (user) {
+        return res.json({
+          success: true,
+          exists: true,
+          user: {
+            id: user.payverseId || user._id.toString(),
+            name: user.name,
+            email: user.email,
+            phone: user.phone,
+            payverseId: user.payverseId,
+            userType: user.userType || 'teen'
+          }
+        });
+      }
+    } else {
+      const user = memoryUsers.find(u => normalizePhone(u.phone) === cleanPhone);
+      if (user) {
+        return res.json({
+          success: true,
+          exists: true,
+          user: {
+            id: user.payverseId || user._id || user.id,
+            name: user.name,
+            email: user.email,
+            phone: user.phone,
+            payverseId: user.payverseId,
+            userType: user.userType || 'teen'
+          }
+        });
+      }
+    }
+    return res.json({ success: true, exists: false });
+  } catch (error) {
+    return res.status(500).json({ success: false, exists: false, message: error.message });
   }
 });
 

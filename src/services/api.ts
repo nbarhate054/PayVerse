@@ -104,6 +104,21 @@ export interface ApiTransaction {
 
 export const api = {
   // Auth API
+  checkUser: async (data: { phone: string }) => {
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/auth/check-user`, {
+        method: 'POST',
+        headers: getHeaders(false),
+        body: JSON.stringify(data),
+      });
+      const result = await parseJsonResponse(response);
+      if (result && result.success) return result;
+      return { success: true, exists: false };
+    } catch (err: any) {
+      return { success: false, exists: false, message: err.message };
+    }
+  },
+
   sendOtp: async (data: { phone: string }) => {
     try {
       const response = await fetch(`${getApiBaseUrl()}/auth/send-otp`, {
@@ -255,15 +270,28 @@ export const api = {
     }
   },
 
-  getUsers: async () => {
+  getUsers: async (search?: string) => {
     const token = getAuthToken();
     if (!token) return { success: false, users: [] };
     try {
-      const response = await fetch(`${getApiBaseUrl()}/auth/users`, {
+      const url = search && search.trim()
+        ? `${getApiBaseUrl()}/users?search=${encodeURIComponent(search.trim())}`
+        : `${getApiBaseUrl()}/users`;
+      const response = await fetch(url, {
         method: 'GET',
         headers: getHeaders(true),
       });
-      return await handleResponse(response);
+      const result = await handleResponse(response);
+      if (result && result.success) return result;
+
+      const fbUrl = search && search.trim()
+        ? `${getApiBaseUrl()}/auth/users?search=${encodeURIComponent(search.trim())}`
+        : `${getApiBaseUrl()}/auth/users`;
+      const fbResponse = await fetch(fbUrl, {
+        method: 'GET',
+        headers: getHeaders(true),
+      });
+      return await handleResponse(fbResponse);
     } catch (err: any) {
       return { success: false, users: [] };
     }

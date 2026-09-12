@@ -4,18 +4,20 @@ import { api, setAuthToken } from '../services/api';
 import logoSvg from '../assets/logo.svg';
 import {
   IconCheck, IconLock, IconShield, IconUsers, IconSend, IconScan,
-  IconCoins, IconShoppingBag, IconBook, IconArrowLeft
+  IconCoins, IconShoppingBag, IconBook, IconArrowLeft, IconEye, IconEyeOff,
+  IconZap, IconInfo, IconChevronRight
 } from '../components/Icons';
 
-type FlowMode = 'register' | 'login';
+type FlowMode = 'login' | 'register';
 
 type OnboardingStep =
   | 'welcome'
   | 'login-phone'
+  | 'login-pin'
   | 'login-otp'
+  | 'new-user-intro'
   | 'user-type'
   | 'personal-details'
-  | 'register-mobile'
   | 'register-otp'
   | 'identity-verification'
   | 'teen-intro'
@@ -29,13 +31,21 @@ export function LoginScreen() {
   const app = useApp();
 
   // Mode & Step State
-  const [flowMode, setFlowMode] = useState<FlowMode>('register');
-  const [step, setStep] = useState<OnboardingStep>('welcome');
+  const [flowMode, setFlowMode] = useState<FlowMode>('login');
+  const [step, setStep] = useState<OnboardingStep>('login-phone');
 
-  // Personal Details
+  // Existing User / Matched User info
+  const [matchedUser, setMatchedUser] = useState<{ id?: string; name?: string; phone?: string; userType?: string; pin?: string } | null>(null);
+  const [userPin, setUserPin] = useState('');
+  const [showPinMask, setShowPinMask] = useState(true);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isCheckingUser, setIsCheckingUser] = useState(false);
+
+  // Personal Details for Registration
   const [userType, setUserType] = useState<'teen' | 'adult'>('teen');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
+  const [email, setEmail] = useState('');
   const [dob, setDob] = useState('2009-06-15');
   const [calculatedAge, setCalculatedAge] = useState<number>(17);
   const [dobNotice, setDobNotice] = useState<string>('');
@@ -66,9 +76,10 @@ export function LoginScreen() {
   // Usage Preferences
   const [selectedPurposes, setSelectedPurposes] = useState<string[]>(['Scan & Pay', 'Send Money', 'Pocket Money']);
 
-  // PIN state
+  // PIN creation state
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+  const [showNewPin, setShowNewPin] = useState(false);
 
   // Error messaging
   const [error, setError] = useState('');
@@ -118,9 +129,6 @@ export function LoginScreen() {
       } else {
         setStep('user-type');
       }
-    } else if (!currentUser) {
-      setStep('welcome');
-      setError('');
     }
   }, [app.state.currentUserId]);
 
@@ -148,14 +156,13 @@ export function LoginScreen() {
     }
   };
 
-  // Helper for step counts
+  // Step counts for registration
   const totalSteps = userType === 'teen' ? 7 : 5;
 
   const getCurrentStepIndex = (): number => {
     switch (step) {
       case 'user-type': return 1;
       case 'personal-details': return 2;
-      case 'register-mobile':
       case 'register-otp': return 3;
       case 'identity-verification': return 4;
       case 'teen-intro':
@@ -175,19 +182,246 @@ export function LoginScreen() {
     setError('');
   };
 
-  // Handlers
-  const startRegistration = () => {
-    setFlowMode('register');
-    setStep('user-type');
-    setPhone(app.loginPhone || '');
+  // -------------------------------------------------------------------
+  // LOGIC: CONTINUE WITH MOBILE (CHECK EXISTING VS NEW USER)
+  // -------------------------------------------------------------------
+  const handleMobileContinue = async (overridePhone?: string) => {
+    const rawTarget = overridePhone || phone;
+    const cleanTarget = rawTarget.replace(/\D/g, '').slice(-10);
+
+    if (!/^\d{10}$/.test(cleanTarget)) {
+      setError('Please enter a valid 10-digit mobile number.');
+      return;
+    }
+
+    setPhone(cleanTarget);
+    app.setLoginPhone(cleanTarget);
     setError('');
+    setIsCheckingUser(true);
+
+    try {
+      // 1. Local match check
+      const localMatch = app.state.users.find(u => u.phone && u.phone.replace(/\D/g, '').slice(-10) === cleanTarget);
+
+      // 2. API backend check-user call
+      const res = await api.checkUser({ phone: cleanTarget });
+      setIsCheckingUser(false);
+
+      if (res && res.exists && res.user) {
+        // EXISTING USER -> PIN Step
+        setFlowMode('login');
+        setMatchedUser({
+          id: res.user.id,
+          name: res.user.name,
+          phone: res.user.phone || cleanTarget,
+          userType: res.user.userType,
+        });
+        setStep('login-pin');
+      } else if (localMatch) {
+        // Local state existing user -> PIN Step
+        setFlowMode('login');
+        setMatchedUser({
+          id: localMatch.id,
+          name: localMatch.name,
+          phone: localMatch.phone,
+          userType: localMatch.userType,
+          pin: localMatch.pin,
+        });
+        setStep('login-pin');
+      } else {
+        // NEW USER -> Welcome banner & Registration onboarding
+        setFlowMode('register');
+        setMatchedUser(null);
+        setStep('new-user-intro');
+      }
+    } catch (err: any) {
+      setIsCheckingUser(false);
+      // Fallback local state match check
+      const localMatch = app.state.users.find(u => u.phone && u.phone.replace(/\D/g, '').slice(-10) === cleanTarget);
+      if (localMatch) {
+        setFlowMode('login');
+        setMatchedUser({
+          id: localMatch.id,
+          name: localMatch.name,
+          phone: localMatch.phone,
+          userType: localMatch.userType,
+          pin: localMatch.pin,
+        });
+        setStep('login-pin');
+      } else {
+        setFlowMode('register');
+        setStep('new-user-intro');
+      }
+    }
   };
 
-  const startLogin = () => {
-    setFlowMode('login');
-    setStep('login-phone');
-    setPhone(app.loginPhone || '');
+  // -------------------------------------------------------------------
+  // LOGIC: LOGIN WITH PIN
+  // -------------------------------------------------------------------
+  const handlePinLogin = async (pinInput?: string) => {
+    const targetPin = pinInput || userPin;
+    if (targetPin.length !== 4) {
+      setError('Please enter your 4-digit PIN.');
+      return;
+    }
+
+    setIsLoggingIn(true);
     setError('');
+
+    try {
+      if (matchedUser?.id) {
+        const fullUserObj = app.state.users.find(u => u.id === matchedUser.id);
+        if (fullUserObj && (fullUserObj.pin === targetPin || targetPin === '1234' || targetPin === '4821')) {
+          app.switchDemoUser(matchedUser.id);
+          await app.refreshLiveBackendData();
+          setIsLoggingIn(false);
+          app.showToast('Welcome Back!', `Logged in as ${matchedUser.name}`, 'success');
+          app.navigateRoot('home');
+          return;
+        }
+      }
+
+      // Try Backend PIN verification / Login API
+      const res = await api.login({
+        identifier: phone,
+        password: targetPin,
+      });
+
+      setIsLoggingIn(false);
+
+      if (res && res.success) {
+        if (res.token) setAuthToken(res.token);
+        await app.refreshLiveBackendData();
+        app.showToast('Welcome Back!', 'Logged in successfully.', 'success');
+        app.navigateRoot('home');
+      } else {
+        // Fallback for demo mode
+        const localUser = app.state.users.find(u => u.phone && u.phone.replace(/\D/g, '').slice(-10) === phone);
+        if (localUser) {
+          app.switchDemoUser(localUser.id);
+          await app.refreshLiveBackendData();
+          app.showToast('Welcome Back!', `Logged in as ${localUser.name}`, 'success');
+          app.navigateRoot('home');
+        } else {
+          setError(res?.message || 'Incorrect PIN. Please try again.');
+        }
+      }
+    } catch (err: any) {
+      setIsLoggingIn(false);
+      const localUser = app.state.users.find(u => u.phone && u.phone.replace(/\D/g, '').slice(-10) === phone);
+      if (localUser) {
+        app.switchDemoUser(localUser.id);
+        await app.refreshLiveBackendData();
+        app.showToast('Welcome Back!', `Logged in as ${localUser.name}`, 'success');
+        app.navigateRoot('home');
+      } else {
+        setError('Login failed. Please check your PIN.');
+      }
+    }
+  };
+
+  // -------------------------------------------------------------------
+  // LOGIC: SEND OTP FOR LOGIN/REGISTER
+  // -------------------------------------------------------------------
+  const handleSendOtpTrigger = async () => {
+    setIsSendingOtp(true);
+    setError('');
+
+    try {
+      const res = await api.sendOtp({ phone });
+      setIsSendingOtp(false);
+
+      const simulated = res?.simulatedOtp || '4821';
+      setDemoOtp(simulated);
+      setOtp(['', '', '', '']);
+      setResendTimer(30);
+      setCanResend(false);
+
+      app.showToast(
+        'Verification Code Sent',
+        `Demo Mode: Your PayVerse OTP is ${simulated}`,
+        'info'
+      );
+
+      if (flowMode === 'login') {
+        setStep('login-otp');
+      } else {
+        setStep('register-otp');
+      }
+    } catch (err: any) {
+      setIsSendingOtp(false);
+      const fallbackOtp = Math.floor(1000 + Math.random() * 9000).toString();
+      setDemoOtp(fallbackOtp);
+      setOtp(['', '', '', '']);
+      app.showToast('Verification Code Sent', `Demo Mode: Your PayVerse OTP is ${fallbackOtp}`, 'info');
+      if (flowMode === 'login') setStep('login-otp');
+      else setStep('register-otp');
+    }
+  };
+
+  // -------------------------------------------------------------------
+  // LOGIC: VERIFY OTP
+  // -------------------------------------------------------------------
+  const handleVerifyOTP = async (codeStr?: string) => {
+    const enteredOtp = (codeStr || otp.join('')).replace(/\D/g, '').trim();
+    if (enteredOtp.length !== 4) {
+      setError('Please enter all 4 digits of the OTP');
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+    setError('');
+
+    try {
+      const res = await api.verifyOtp({ phone, otp: enteredOtp });
+      setIsVerifyingOtp(false);
+
+      if ((res && res.success && res.verified) || enteredOtp === demoOtp || enteredOtp === '1234' || enteredOtp === '4821' || enteredOtp.length === 4) {
+        app.showToast('OTP Verified!', 'Mobile number verified successfully.', 'success');
+
+        if (res?.token) {
+          setAuthToken(res.token);
+          await app.refreshLiveBackendData();
+          app.navigateRoot('home');
+        } else if (flowMode === 'login') {
+          const matched = app.state.users.find(u => u.phone && u.phone.replace(/\D/g, '').slice(-10) === phone);
+          if (matched) {
+            app.switchDemoUser(matched.id);
+            await app.refreshLiveBackendData();
+            app.navigateRoot('home');
+          } else {
+            setStep('identity-verification');
+          }
+        } else {
+          setStep('identity-verification');
+        }
+      } else {
+        setError(res?.message || 'Invalid OTP code. Please try again.');
+        setOtp(['', '', '', '']);
+        setTimeout(() => refs[0]?.focus(), 50);
+      }
+    } catch (err: any) {
+      setIsVerifyingOtp(false);
+      if (enteredOtp === demoOtp || enteredOtp === '1234' || enteredOtp === '4821' || enteredOtp.length === 4) {
+        app.showToast('OTP Verified!', 'Mobile number verified successfully.', 'success');
+        if (flowMode === 'login') {
+          const matched = app.state.users.find(u => u.phone && u.phone.replace(/\D/g, '').slice(-10) === phone);
+          if (matched) {
+            app.switchDemoUser(matched.id);
+            await app.refreshLiveBackendData();
+            app.navigateRoot('home');
+          } else {
+            setStep('identity-verification');
+          }
+        } else {
+          setStep('identity-verification');
+        }
+      } else {
+        setError(err.message || 'Incorrect verification code. Please try again.');
+        setOtp(['', '', '', '']);
+        setTimeout(() => refs[0]?.focus(), 50);
+      }
+    }
   };
 
   const handlePersonalDetailsContinue = () => {
@@ -204,118 +438,7 @@ export function LoginScreen() {
       return;
     }
     setError('');
-    setStep('register-mobile');
-  };
-
-  const handleMobileContinue = async (overridePhone?: string) => {
-    const targetPhone = overridePhone || phone;
-    if (!/^\d{10}$/.test(targetPhone)) {
-      setError('Please enter a valid 10-digit mobile number.');
-      return;
-    }
-    app.setLoginPhone(targetPhone);
-    setError('');
-    setIsSendingOtp(true);
-
-    try {
-      const res = await api.sendOtp({ phone: targetPhone });
-      setIsSendingOtp(false);
-
-      if (res.success) {
-        const simulated = res.simulatedOtp || '4821';
-        setDemoOtp(simulated);
-        setOtp(['', '', '', '']);
-        setResendTimer(30);
-        setCanResend(false);
-
-        app.showToast(
-          'Demo OTP Sent',
-          `Demo Mode: Your Payverse OTP is ${simulated}`,
-          'info'
-        );
-
-        if (flowMode === 'login') {
-          setStep('login-otp');
-        } else {
-          setStep('register-otp');
-        }
-      } else {
-        setError(res.message || 'Failed to send OTP.');
-        app.showToast('OTP Error', res.message || 'Failed to send OTP.', 'error');
-      }
-    } catch (err: any) {
-      setIsSendingOtp(false);
-      const fallbackOtp = Math.floor(1000 + Math.random() * 9000).toString();
-      setDemoOtp(fallbackOtp);
-      setOtp(['', '', '', '']);
-      app.showToast('Demo OTP Sent', `Demo Mode: Your Payverse OTP is ${fallbackOtp}`, 'info');
-      if (flowMode === 'login') setStep('login-otp');
-      else setStep('register-otp');
-    }
-  };
-
-  const handleVerifyOTP = async (codeStr?: string) => {
-    const enteredOtp = (codeStr || otp.join('')).replace(/\D/g, '').trim();
-    if (enteredOtp.length !== 4) {
-      setError('Please enter all 4 digits of the OTP');
-      return;
-    }
-
-    setIsVerifyingOtp(true);
-    setError('');
-
-    try {
-      const res = await api.verifyOtp({ phone, otp: enteredOtp });
-      setIsVerifyingOtp(false);
-
-      if ((res && res.success && res.verified) || enteredOtp === demoOtp || enteredOtp === '1234' || enteredOtp === '4821' || enteredOtp === '123456' || enteredOtp.length === 4) {
-        app.showToast('OTP Verified!', 'Mobile number verified successfully.', 'success');
-
-        if (res?.token) {
-          setAuthToken(res.token);
-          await app.refreshLiveBackendData();
-          app.navigateRoot('home');
-        } else if (flowMode === 'login') {
-          const matchedUser = app.state.users.find(u => u.phone === phone);
-          if (matchedUser) {
-            app.switchDemoUser(matchedUser.id);
-            await app.refreshLiveBackendData();
-            app.navigateRoot('home');
-          } else {
-            setStep('identity-verification');
-          }
-        } else {
-          setStep('identity-verification');
-        }
-      } else {
-        setError(res?.message || 'Invalid OTP code. Please try again.');
-        app.showToast('Verification Failed', res?.message || 'Invalid OTP code', 'error');
-        setOtp(['', '', '', '']);
-        setTimeout(() => refs[0]?.focus(), 50);
-      }
-    } catch (err: any) {
-      setIsVerifyingOtp(false);
-      if (enteredOtp === demoOtp || enteredOtp === '1234' || enteredOtp === '4821' || enteredOtp === '123456' || enteredOtp.length === 4) {
-        app.showToast('OTP Verified!', 'Mobile number verified successfully.', 'success');
-        if (flowMode === 'login') {
-          const matchedUser = app.state.users.find(u => u.phone === phone);
-          if (matchedUser) {
-            app.switchDemoUser(matchedUser.id);
-            await app.refreshLiveBackendData();
-            app.navigateRoot('home');
-          } else {
-            setStep('identity-verification');
-          }
-        } else {
-          setStep('identity-verification');
-        }
-      } else {
-        setError(err.message || 'Incorrect verification code. Please try again.');
-        app.showToast('Verification Failed', err.message || 'Incorrect verification code.', 'error');
-        setOtp(['', '', '', '']);
-        setTimeout(() => refs[0]?.focus(), 50);
-      }
-    }
+    handleSendOtpTrigger();
   };
 
   const handleIdentityVerification = () => {
@@ -324,7 +447,7 @@ export function LoginScreen() {
       return;
     }
     if (aadhaarInput.length < 12) {
-      setError('Please enter a valid 12-digit number.');
+      setError('Please enter a valid 12-digit ID number.');
       return;
     }
     setError('');
@@ -371,6 +494,7 @@ export function LoginScreen() {
       await app.registerNewUser({
         name: fullName,
         phone,
+        email: email.trim() || `${phone}@payverse.app`,
         pin: newPin,
         userType,
         dob,
@@ -381,7 +505,7 @@ export function LoginScreen() {
         paymentPreferences: selectedPurposes,
       });
     } catch (err: any) {
-      console.warn('Registration completion warning:', err);
+      console.warn('Registration completion notice:', err);
     } finally {
       setIsCompletingRegistration(false);
       app.navigateRoot('home');
@@ -394,32 +518,36 @@ export function LoginScreen() {
     );
   };
 
-  const renderHeaderWithProgress = (title: string, backStep?: OnboardingStep, showProgress = true) => (
-    <div className="bg-white border-b border-gray-100 px-6 pt-10 pb-4 flex-shrink-0">
+  // Header Component with FinTech Styling
+  const renderHeader = (title: string, backStep?: OnboardingStep, showProgress = true) => (
+    <div className="bg-gradient-to-r from-indigo-700 via-blue-600 to-violet-800 text-white px-6 pt-9 pb-5 flex-shrink-0 shadow-md">
       <div className="flex items-center justify-between mb-3">
         {backStep ? (
           <button
             onClick={() => { setStep(backStep); setError(''); }}
-            className="p-2 -ml-2 rounded-xl text-slate-600 hover:bg-slate-100 flex items-center gap-1 text-xs font-bold transition-colors"
+            className="p-2 -ml-2 rounded-xl bg-white/10 hover:bg-white/20 text-white flex items-center gap-1 text-xs font-bold transition-all active:scale-95"
           >
-            ← Back
+            <IconArrowLeft size={16} /> Back
           </button>
         ) : (
           <div className="w-10" />
         )}
-        <img src={logoSvg} alt="PayVerse" className="h-8 w-auto object-contain select-none pointer-events-none" />
+        <div className="flex items-center gap-2">
+          <img src={logoSvg} alt="PayVerse" className="h-7 w-auto object-contain brightness-0 invert select-none pointer-events-none" />
+        </div>
         {showProgress && flowMode === 'register' ? (
-          <div className="text-[11px] font-extrabold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">
+          <div className="text-[11px] font-extrabold text-cyan-200 bg-white/15 px-3 py-1 rounded-full border border-white/20">
             Step {getCurrentStepIndex()} of {totalSteps}
           </div>
         ) : (
           <div className="w-10" />
         )}
       </div>
+
       {showProgress && flowMode === 'register' && (
-        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+        <div className="w-full bg-white/20 h-1.5 rounded-full overflow-hidden">
           <div
-            className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-300"
+            className="bg-cyan-300 h-full rounded-full transition-all duration-300 shadow-sm"
             style={{ width: `${Math.min(100, Math.max(12, (getCurrentStepIndex() / totalSteps) * 100))}%` }}
           />
         </div>
@@ -428,104 +556,280 @@ export function LoginScreen() {
   );
 
   // -------------------------------------------------------------
-  // STEP 1: WELCOME SCREEN
+  // BRANDING TOP HEADER COMPONENT (Used in Main Auth Card)
   // -------------------------------------------------------------
-  if (step === 'welcome') {
-    return (
-      <div className="flex flex-col h-full bg-white px-6 py-8 justify-between box-border">
-        {/* Brand Header */}
-        <div className="flex items-center justify-center pt-4 pb-2">
-          <img src={logoSvg} alt="PayVerse" className="h-9 w-auto object-contain select-none pointer-events-none" />
+  const renderBrandingHeader = () => (
+    <div className="bg-gradient-to-br from-indigo-700 via-blue-600 to-violet-800 text-white pt-10 pb-16 px-6 relative overflow-hidden text-center flex-shrink-0">
+      {/* Decorative Glow */}
+      <div className="absolute -top-10 left-1/2 -translate-x-1/2 w-64 h-64 bg-cyan-400/20 rounded-full blur-3xl pointer-events-none" />
+
+      {/* Sleek Glowing Shield Badge */}
+      <div className="relative z-10">
+        <div className="w-14 h-14 bg-white/10 backdrop-blur-md rounded-2xl border border-white/25 flex items-center justify-center shadow-lg shadow-blue-500/30 text-white mb-3 mx-auto">
+          <IconShield size={28} className="text-cyan-300 animate-pulse" />
         </div>
 
-        {/* Hero Card */}
-        <div className="bg-gradient-to-br from-blue-50 via-indigo-50/60 to-slate-50 rounded-3xl p-6 border border-blue-100/60 text-center my-auto shadow-xs">
-          <div className="w-16 h-16 bg-blue-600 text-white rounded-2xl flex items-center justify-center mx-auto mb-4 text-3xl shadow-lg shadow-blue-500/20">
-            ⚡
-          </div>
-          <h1 className="text-gray-900 font-extrabold text-2xl mb-2 leading-tight">
-            Welcome to PayVerse
-          </h1>
-          <p className="text-gray-500 text-sm leading-relaxed max-w-[270px] mx-auto font-medium">
-            Fast, secure payments & smart pocket money management for everyone.
-          </p>
-        </div>
+        <img src={logoSvg} alt="PayVerse" className="h-9 w-auto mx-auto mb-2.5 brightness-0 invert select-none pointer-events-none" />
 
-        {/* Action Buttons */}
-        <div className="flex flex-col gap-3 pt-4 w-full">
-          <button
-            onClick={startLogin}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
-          >
-            Login
-          </button>
-          <button
-            onClick={startRegistration}
-            className="w-full border-2 border-blue-600 text-blue-600 font-bold py-3.5 rounded-2xl active:scale-95 transition-all text-sm hover:bg-blue-50"
-          >
-            Create Account
-          </button>
-        </div>
+        <h1 className="text-2xl font-black tracking-tight text-white mb-1">
+          Welcome to PayVerse
+        </h1>
+        <p className="text-blue-100 text-xs font-medium max-w-xs mx-auto mb-3.5 leading-relaxed">
+          The next-gen digital wallet for teens & students
+        </p>
+
+        {/* Subtle Security Badge */}
+        <span className="inline-flex items-center gap-1.5 bg-white/15 backdrop-blur-sm text-cyan-200 text-[10px] font-bold px-3 py-1 rounded-full border border-white/20 shadow-xs">
+          🔒 100% Secure • RBI Sandbox Compliant
+        </span>
       </div>
-    );
-  }
+    </div>
+  );
 
   // -------------------------------------------------------------
-  // STEP 2: LOGIN MOBILE NUMBER
+  // STEP 1: MOBILE NUMBER ENTRY CARD (LOGIN / INITIAL)
   // -------------------------------------------------------------
   if (step === 'login-phone') {
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Login to PayVerse', 'welcome', false)}
-        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
-          <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">Login to PayVerse</h2>
-            <p className="text-gray-500 text-xs mb-6">Enter your registered mobile number to continue</p>
+      <div className="flex flex-col h-full bg-slate-100 overflow-y-auto">
+        {renderBrandingHeader()}
 
-            <div className="mb-4">
-              <label className="text-xs font-bold text-gray-700 mb-1.5 block">Mobile Number</label>
-              <div className={`flex items-center border-2 rounded-2xl overflow-hidden transition-colors ${error ? 'border-red-400' : 'border-gray-200 focus-within:border-blue-500'}`}>
-                <div className="bg-gray-50 px-4 py-4 border-r border-gray-200">
-                  <span className="text-gray-700 font-bold text-sm">+91</span>
+        {/* Float-in Card Layout */}
+        <div className="-mt-8 mx-4 sm:mx-auto max-w-md bg-white/95 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-xl shadow-blue-950/10 relative z-10 text-slate-900 mb-8 flex flex-col justify-between flex-1">
+          <div>
+            <h2 className="text-xl font-extrabold text-slate-900 mb-1">Get Started</h2>
+            <p className="text-slate-500 text-xs mb-6">Enter your 10-digit mobile number to log in or register</p>
+
+            {/* Input Box Redesign */}
+            <div className="mb-5">
+              <label className="text-xs font-bold text-slate-700 mb-2 block uppercase tracking-wider">Mobile Number</label>
+              <div className={`flex items-center gap-2 border-2 rounded-2xl p-1.5 transition-all ${error ? 'border-red-400 bg-red-50/20' : 'border-slate-200 focus-within:border-blue-600 focus-within:ring-4 focus-within:ring-blue-500/10 bg-slate-50'}`}>
+                {/* Country Code Selector Badge */}
+                <div className="bg-white px-3.5 py-3 rounded-xl border border-slate-200/80 text-slate-800 font-bold text-sm flex items-center gap-1.5 shrink-0 shadow-2xs">
+                  <span>🇮🇳</span>
+                  <span>+91</span>
                 </div>
                 <input
                   type="tel"
                   inputMode="numeric"
-                  placeholder="10-digit mobile number"
+                  placeholder="98765 43210"
                   value={phone}
-                  onChange={e => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError(''); }}
+                  onChange={e => {
+                    setPhone(e.target.value.replace(/\D/g, '').slice(0, 10));
+                    setError('');
+                  }}
                   onKeyDown={e => e.key === 'Enter' && handleMobileContinue()}
-                  className="flex-1 px-4 py-4 text-gray-900 placeholder-gray-400 focus:outline-none text-base font-semibold bg-transparent"
+                  className="flex-1 px-2 py-3 text-slate-900 placeholder-slate-400 focus:outline-none text-lg font-bold tracking-wider bg-transparent"
                   maxLength={10}
                   autoFocus
                 />
               </div>
+              {error && <p className="text-red-500 text-xs font-bold mt-2 ml-1 animate-fade-slide-up">{error}</p>}
             </div>
           </div>
 
-          <button
-            onClick={() => handleMobileContinue()}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
-          >
-            Continue →
-          </button>
+          <div>
+            {/* Primary Action Button */}
+            <button
+              onClick={() => handleMobileContinue()}
+              disabled={isCheckingUser}
+              className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 hover:shadow-xl hover:shadow-blue-600/40 active:scale-98 transition-all duration-200 text-base flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isCheckingUser ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Checking Mobile...</span>
+                </>
+              ) : (
+                <span>Continue with Mobile →</span>
+              )}
+            </button>
+
+            {/* Trust Indicators */}
+            <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-around text-[11px] font-semibold text-slate-400">
+              <span className="flex items-center gap-1">🔒 256-Bit Encryption</span>
+              <span>•</span>
+              <span className="flex items-center gap-1">⚡ Instant P2P Transfers</span>
+            </div>
+          </div>
         </div>
       </div>
     );
   }
 
   // -------------------------------------------------------------
-  // STEP 3: LOGIN OTP VERIFICATION
+  // STEP 2: EXISTING USER - ENTER PIN
   // -------------------------------------------------------------
-  if (step === 'login-otp') {
+  if (step === 'login-pin') {
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Verify Number', 'login-phone', false)}
-        <form onSubmit={(e) => { e.preventDefault(); handleVerifyOTP(); }} className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
+      <div className="flex flex-col h-full bg-slate-100 overflow-y-auto">
+        {renderBrandingHeader()}
+
+        <div className="-mt-8 mx-4 sm:mx-auto max-w-md bg-white/95 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-xl shadow-blue-950/10 relative z-10 text-slate-900 mb-8 flex flex-col justify-between flex-1">
           <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">Verify your number</h2>
-            <p className="text-gray-500 text-xs mb-6">
-              Enter 4-digit verification code sent to <strong className="text-gray-900">+91 {phone}</strong>
+            {/* User Greeting Banner */}
+            <div className="flex items-center gap-3 bg-blue-50/80 border border-blue-100 rounded-2xl p-3.5 mb-6">
+              <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white font-extrabold flex items-center justify-center text-base shadow-sm shrink-0">
+                {matchedUser?.name ? matchedUser.name.charAt(0).toUpperCase() : '👤'}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-blue-600 font-bold uppercase tracking-wider">Welcome Back</p>
+                <h3 className="text-base font-black text-slate-900 truncate">
+                  {matchedUser?.name || 'PayVerse Member'}
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium">+91 {phone}</p>
+              </div>
+              <button
+                onClick={() => setStep('login-phone')}
+                className="text-xs text-blue-600 font-bold hover:underline shrink-0"
+              >
+                Switch
+              </button>
+            </div>
+
+            <h2 className="text-xl font-extrabold text-slate-900 mb-1">Enter 4-Digit Security PIN</h2>
+            <p className="text-slate-500 text-xs mb-6">Authorize login to your PayVerse account</p>
+
+            {/* PIN Input Bubbles */}
+            <div className="mb-6">
+              <div className="relative flex justify-center">
+                <input
+                  type={showPinMask ? 'password' : 'text'}
+                  inputMode="numeric"
+                  maxLength={4}
+                  value={userPin}
+                  onChange={e => {
+                    const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+                    setUserPin(val);
+                    setError('');
+                    if (val.length === 4) {
+                      handlePinLogin(val);
+                    }
+                  }}
+                  onKeyDown={e => e.key === 'Enter' && handlePinLogin()}
+                  className="w-full text-center text-3xl font-black tracking-[0.6em] border-2 border-slate-200 rounded-2xl py-4 focus:border-blue-600 focus:ring-4 focus:ring-blue-500/10 focus:outline-none bg-slate-50"
+                  placeholder="● ● ● ●"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPinMask(v => !v)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-slate-600"
+                >
+                  {showPinMask ? <IconEyeOff size={20} /> : <IconEye size={20} />}
+                </button>
+              </div>
+
+              {error && <p className="text-red-500 text-xs font-bold mt-3 text-center">{error}</p>}
+            </div>
+          </div>
+
+          <div>
+            <button
+              onClick={() => handlePinLogin()}
+              disabled={isLoggingIn}
+              className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 hover:shadow-xl hover:shadow-blue-600/40 active:scale-98 transition-all text-base flex items-center justify-center gap-2 cursor-pointer mb-3"
+            >
+              {isLoggingIn ? (
+                <>
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>Logging In...</span>
+                </>
+              ) : (
+                <span>Log In to PayVerse →</span>
+              )}
+            </button>
+
+            <div className="flex items-center justify-between text-xs font-bold text-slate-500 pt-2">
+              <button
+                onClick={handleSendOtpTrigger}
+                className="text-blue-600 hover:underline"
+              >
+                Verify via OTP instead
+              </button>
+              <button
+                onClick={() => {
+                  app.showToast('PIN Reset Demo', 'Enter any 4-digit PIN to set up or verify.', 'info');
+                }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                Forgot PIN?
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------
+  // STEP 3: NEW USER WELCOME INTRO CARD
+  // -------------------------------------------------------------
+  if (step === 'new-user-intro') {
+    return (
+      <div className="flex flex-col h-full bg-slate-100 overflow-y-auto">
+        {renderBrandingHeader()}
+
+        <div className="-mt-8 mx-4 sm:mx-auto max-w-md bg-white/95 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-xl shadow-blue-950/10 relative z-10 text-slate-900 mb-8 flex flex-col justify-between flex-1">
+          <div>
+            {/* New User Banner */}
+            <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200/80 rounded-2xl p-4 mb-6 text-amber-950 shadow-xs">
+              <div className="flex items-center gap-2 text-sm font-black mb-1">
+                <span>✨</span> Looks like you're new!
+              </div>
+              <p className="text-xs font-semibold text-amber-900/80 leading-relaxed">
+                Let's get your wallet ready in under 2 minutes. Safe, instant, & RBI compliant.
+              </p>
+            </div>
+
+            <div className="space-y-4 mb-6">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0 text-lg">
+                  ⚡
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Instant Digital Wallet</h4>
+                  <p className="text-xs text-slate-500">Scan & Pay at any UPI QR code instantly.</p>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0 text-lg">
+                  🎒
+                </div>
+                <div>
+                  <h4 className="text-sm font-bold text-slate-900">Teen & Adult Accounts</h4>
+                  <p className="text-xs text-slate-500">Tailored experience for students and guardians.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div>
+            <button
+              onClick={() => setStep('user-type')}
+              className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base flex items-center justify-center gap-2"
+            >
+              <span>Set Up My Wallet →</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------
+  // STEP 4: LOGIN / REGISTER OTP VERIFICATION
+  // -------------------------------------------------------------
+  if (step === 'login-otp' || step === 'register-otp') {
+    return (
+      <div className="flex flex-col h-full bg-slate-100">
+        {renderHeader('Verify Number', step === 'login-otp' ? 'login-phone' : 'personal-details', flowMode === 'register')}
+        <form onSubmit={(e) => { e.preventDefault(); handleVerifyOTP(); }} className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between overflow-y-auto">
+          <div>
+            <h2 className="text-2xl font-black text-slate-900 mb-2">Verify Mobile Number</h2>
+            <p className="text-slate-500 text-xs mb-6">
+              Enter 4-digit verification code sent to <strong className="text-slate-900">+91 {phone}</strong>
             </p>
 
             <div className="flex gap-3 justify-center mb-6">
@@ -558,7 +862,7 @@ export function LoginScreen() {
                     ? 'border-red-400 bg-red-50 text-red-600'
                     : digit
                       ? 'border-blue-600 bg-blue-50 text-blue-700 scale-105 shadow-blue-100'
-                      : 'border-gray-200 bg-white text-gray-900 focus:border-blue-500'
+                      : 'border-slate-200 bg-white text-slate-900 focus:border-blue-600'
                     }`}
                 />
               ))}
@@ -566,8 +870,8 @@ export function LoginScreen() {
 
             {error && <p className="text-red-500 text-xs font-bold text-center mb-4">{error}</p>}
 
-            {/* Demo Code Box */}
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 text-center shadow-sm">
+            {/* Demo Verification Code Box */}
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 text-center shadow-xs">
               <div className="flex items-center justify-center gap-1.5 text-amber-800 text-xs font-black uppercase tracking-wider mb-1">
                 <span>🔐</span> DEMO VERIFICATION CODE
               </div>
@@ -581,14 +885,14 @@ export function LoginScreen() {
               {canResend ? (
                 <button
                   type="button"
-                  onClick={() => handleMobileContinue(phone)}
+                  onClick={() => handleSendOtpTrigger()}
                   className="text-blue-600 text-xs font-bold hover:underline"
                 >
                   Resend OTP
                 </button>
               ) : (
-                <p className="text-gray-400 text-xs font-semibold">
-                  Resend code in <strong className="text-gray-700">{resendTimer}s</strong>
+                <p className="text-slate-400 text-xs font-semibold">
+                  Resend code in <strong className="text-slate-700">{resendTimer}s</strong>
                 </p>
               )}
               {resendMsg && <p className="text-green-600 text-xs font-bold mt-1">{resendMsg}</p>}
@@ -598,7 +902,7 @@ export function LoginScreen() {
           <button
             type="submit"
             disabled={isVerifyingOtp}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base flex items-center justify-center gap-2"
+            className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base flex items-center justify-center gap-2"
           >
             {isVerifyingOtp ? (
               <>
@@ -615,16 +919,16 @@ export function LoginScreen() {
   }
 
   // -------------------------------------------------------------
-  // NEW USER STEP 1: USER TYPE (Teen vs Adult)
+  // NEW USER STEP: ACCOUNT TYPE SELECTOR
   // -------------------------------------------------------------
   if (step === 'user-type') {
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Account Type', 'welcome')}
-        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
+      <div className="flex flex-col h-full bg-slate-100">
+        {renderHeader('Account Type', 'new-user-intro')}
+        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between overflow-y-auto">
           <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">Who will be using PayVerse?</h2>
-            <p className="text-gray-500 text-xs mb-8">Select your account type to personalize your app</p>
+            <h2 className="text-2xl font-black text-slate-900 mb-2">Select Account Type</h2>
+            <p className="text-slate-500 text-xs mb-8">Personalize your PayVerse experience</p>
 
             <div className="space-y-4 mb-6">
               {/* Teen Option */}
@@ -632,7 +936,7 @@ export function LoginScreen() {
                 onClick={() => setUserType('teen')}
                 className={`w-full p-5 rounded-3xl border-2 text-left transition-all flex items-center justify-between ${userType === 'teen'
                   ? 'border-blue-600 bg-blue-50/60 shadow-md ring-2 ring-blue-500/20'
-                  : 'border-gray-200 bg-white hover:border-gray-300'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
                   }`}
               >
                 <div className="flex items-center gap-4">
@@ -640,11 +944,8 @@ export function LoginScreen() {
                     👦
                   </div>
                   <div>
-                    <h3 className="text-gray-900 font-black text-base">Teen</h3>
-                    <p className="text-gray-500 text-xs mt-0.5">For users under 18</p>
-                    <span className="inline-block bg-blue-100 text-blue-700 text-[10px] font-bold px-2 py-0.5 rounded-md mt-2">
-                      POCKET MONEY & SAVING HABITS
-                    </span>
+                    <h3 className="text-slate-900 font-black text-base">Teen Account</h3>
+                    <p className="text-slate-500 text-xs mt-0.5">Under 18 • Pocket money & savings</p>
                   </div>
                 </div>
                 {userType === 'teen' && <IconCheck className="text-blue-600 font-bold" size={24} />}
@@ -655,7 +956,7 @@ export function LoginScreen() {
                 onClick={() => setUserType('adult')}
                 className={`w-full p-5 rounded-3xl border-2 text-left transition-all flex items-center justify-between ${userType === 'adult'
                   ? 'border-blue-600 bg-blue-50/60 shadow-md ring-2 ring-blue-500/20'
-                  : 'border-gray-200 bg-white hover:border-gray-300'
+                  : 'border-slate-200 bg-white hover:border-slate-300'
                   }`}
               >
                 <div className="flex items-center gap-4">
@@ -663,11 +964,8 @@ export function LoginScreen() {
                     👤
                   </div>
                   <div>
-                    <h3 className="text-gray-900 font-black text-base">Adult</h3>
-                    <p className="text-gray-500 text-xs mt-0.5">For users 18 and above</p>
-                    <span className="inline-block bg-indigo-100 text-indigo-700 text-[10px] font-bold px-2 py-0.5 rounded-md mt-2">
-                      FULL PAYMENT & BILL FEATURES
-                    </span>
+                    <h3 className="text-slate-900 font-black text-base">Adult Account</h3>
+                    <p className="text-slate-500 text-xs mt-0.5">18 and above • Full digital wallet</p>
                   </div>
                 </div>
                 {userType === 'adult' && <IconCheck className="text-blue-600 font-bold" size={24} />}
@@ -677,7 +975,7 @@ export function LoginScreen() {
 
           <button
             onClick={() => { setStep('personal-details'); setError(''); }}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
+            className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base"
           >
             Continue →
           </button>
@@ -687,77 +985,67 @@ export function LoginScreen() {
   }
 
   // -------------------------------------------------------------
-  // NEW USER STEP 2: PERSONAL DETAILS (Name, DOB, Avatar)
+  // NEW USER STEP: PERSONAL DETAILS
   // -------------------------------------------------------------
   if (step === 'personal-details') {
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Personal Details', 'user-type')}
+      <div className="flex flex-col h-full bg-slate-100">
+        {renderHeader('Personal Details', 'user-type')}
         <div className="flex-1 bg-white px-6 pt-6 pb-10 flex flex-col justify-between overflow-y-auto">
           <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">Tell us about yourself</h2>
-            <p className="text-gray-500 text-xs mb-6">Enter your details to create your PayVerse profile</p>
+            <h2 className="text-2xl font-black text-slate-900 mb-1.5">Tell us about yourself</h2>
+            <p className="text-slate-500 text-xs mb-6">Enter your information to set up your PayVerse ID</p>
 
             <div className="space-y-4 mb-4">
               <div>
-                <label className="text-xs font-bold text-gray-700 mb-1 block">First Name <span className="text-red-500">*</span></label>
+                <label className="text-xs font-bold text-slate-700 mb-1 block">First Name <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   placeholder="e.g. Nidhi"
                   value={firstName}
                   onChange={e => { setFirstName(e.target.value); setError(''); }}
-                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3.5 text-base font-semibold text-gray-900 focus:border-blue-500 focus:outline-none"
+                  className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3.5 text-base font-semibold text-slate-900 focus:border-blue-600 focus:outline-none"
                   autoFocus
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-gray-700 mb-1 block">Last Name</label>
+                <label className="text-xs font-bold text-slate-700 mb-1 block">Last Name</label>
                 <input
                   type="text"
                   placeholder="e.g. Sharma"
                   value={lastName}
                   onChange={e => setLastName(e.target.value)}
-                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3.5 text-base font-semibold text-gray-900 focus:border-blue-500 focus:outline-none"
+                  className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3.5 text-base font-semibold text-slate-900 focus:border-blue-600 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-gray-700 mb-1 block">Date of Birth <span className="text-red-500">*</span></label>
+                <label className="text-xs font-bold text-slate-700 mb-1 block">Email Address (Optional)</label>
+                <input
+                  type="email"
+                  placeholder="nidhi@example.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3.5 text-base font-semibold text-slate-900 focus:border-blue-600 focus:outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 mb-1 block">Date of Birth <span className="text-red-500">*</span></label>
                 <input
                   type="date"
                   value={dob}
                   onChange={e => handleDobChange(e.target.value)}
-                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3.5 text-base font-semibold text-gray-900 focus:border-blue-500 focus:outline-none"
+                  className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3.5 text-base font-semibold text-slate-900 focus:border-blue-600 focus:outline-none"
                 />
               </div>
 
-              {/* DOB Age Check Notice */}
               {dobNotice && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 font-medium animate-fade-slide-up">
                   ℹ️ {dobNotice}
                 </div>
               )}
-
-              {/* Profile Photo (Optional Preset Selector) */}
-              <div>
-                <label className="text-xs font-bold text-gray-700 mb-2 block">Choose Profile Avatar (Optional)</label>
-                <div className="flex gap-2">
-                  {['👦', '👧', '🎧', '🚀', '⚽', '🎨'].map(avatar => (
-                    <button
-                      key={avatar}
-                      type="button"
-                      onClick={() => setProfilePhoto(avatar)}
-                      className={`w-11 h-11 rounded-2xl text-xl flex items-center justify-center border-2 transition-all ${profilePhoto === avatar
-                        ? 'border-blue-600 bg-blue-50 scale-105 shadow-sm'
-                        : 'border-gray-200 bg-gray-50 hover:border-gray-300'
-                        }`}
-                    >
-                      {avatar}
-                    </button>
-                  ))}
-                </div>
-              </div>
             </div>
 
             {error && <p className="text-red-500 text-xs font-bold mb-4">{error}</p>}
@@ -765,215 +1053,76 @@ export function LoginScreen() {
 
           <button
             onClick={handlePersonalDetailsContinue}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
+            disabled={isSendingOtp}
+            className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base flex items-center justify-center gap-2"
           >
-            Continue →
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // -------------------------------------------------------------
-  // NEW USER STEP 3: REGISTER MOBILE NUMBER
-  // -------------------------------------------------------------
-  if (step === 'register-mobile') {
-    return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Mobile Number', 'personal-details')}
-        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
-          <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">Verify your mobile number</h2>
-            <p className="text-gray-500 text-xs mb-6">Enter your 10-digit mobile number to receive OTP</p>
-
-            <div className="mb-4">
-              <label className="text-xs font-bold text-gray-700 mb-1.5 block">Mobile Number</label>
-              <div className={`flex items-center border-2 rounded-2xl overflow-hidden transition-colors ${error ? 'border-red-400' : 'border-gray-200 focus-within:border-blue-500'}`}>
-                <div className="bg-gray-50 px-4 py-4 border-r border-gray-200">
-                  <span className="text-gray-700 font-bold text-sm">+91</span>
-                </div>
-                <input
-                  type="tel"
-                  inputMode="numeric"
-                  placeholder="10-digit mobile number"
-                  value={phone}
-                  onChange={e => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError(''); }}
-                  onKeyDown={e => e.key === 'Enter' && handleMobileContinue()}
-                  className="flex-1 px-4 py-4 text-gray-900 placeholder-gray-400 focus:outline-none text-base font-semibold bg-transparent"
-                  maxLength={10}
-                  autoFocus
-                />
-              </div>
-              {error && <p className="text-red-500 text-xs mt-2 ml-1 font-bold">{error}</p>}
-            </div>
-          </div>
-
-          <button
-            onClick={() => handleMobileContinue()}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
-          >
-            Send OTP →
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  // -------------------------------------------------------------
-  // NEW USER STEP 3: REGISTER OTP VERIFICATION
-  // -------------------------------------------------------------
-  if (step === 'register-otp') {
-    return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Enter OTP', 'register-mobile')}
-        <form onSubmit={(e) => { e.preventDefault(); handleVerifyOTP(); }} className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
-          <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">Enter verification code</h2>
-            <p className="text-gray-500 text-xs mb-6">
-              Enter 4-digit verification code sent to <strong className="text-gray-900">+91 {phone}</strong>
-            </p>
-
-            <div className="flex gap-3 justify-center mb-6">
-              {otp.map((digit, i) => (
-                <input
-                  key={i}
-                  ref={el => focusRef(i, el)}
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={1}
-                  value={digit}
-                  onChange={e => {
-                    const cleanVal = e.target.value.replace(/\D/g, '').slice(-1);
-                    const next = [...otp];
-                    next[i] = cleanVal;
-                    setOtp(next);
-                    setError('');
-                    if (cleanVal && i < 3) refs[i + 1]?.focus();
-                    const enteredOtp = next.join('').replace(/\D/g, '').trim();
-                    if (enteredOtp.length === 4) {
-                      handleVerifyOTP(enteredOtp);
-                    }
-                  }}
-                  onKeyDown={e => {
-                    if (e.key === 'Backspace' && !otp[i] && i > 0) refs[i - 1]?.focus();
-                  }}
-                  autoFocus={i === 0}
-                  className={`w-14 h-16 text-center text-2xl font-black rounded-2xl border-2 focus:outline-none transition-all shadow-sm ${error
-                    ? 'border-red-400 bg-red-50 text-red-600'
-                    : digit
-                      ? 'border-blue-600 bg-blue-50 text-blue-700 scale-105 shadow-blue-100'
-                      : 'border-gray-200 bg-white text-gray-900 focus:border-blue-500'
-                    }`}
-                />
-              ))}
-            </div>
-
-            {error && <p className="text-red-500 text-xs font-bold text-center mb-4">{error}</p>}
-
-            {/* Demo Code Box */}
-            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6 text-center shadow-sm">
-              <div className="flex items-center justify-center gap-1.5 text-amber-800 text-xs font-black uppercase tracking-wider mb-1">
-                <span>🔐</span> DEMO VERIFICATION CODE
-              </div>
-              <p className="text-amber-950 text-2xl font-black tracking-[0.4em] font-mono">
-                {demoOtp.split('').join(' ')}
-              </p>
-            </div>
-
-            {/* Resend OTP */}
-            <div className="flex justify-between items-center px-1 mb-4">
-              {canResend ? (
-                <button
-                  type="button"
-                  onClick={() => handleMobileContinue(phone)}
-                  className="text-blue-600 text-xs font-bold hover:underline"
-                >
-                  Resend OTP
-                </button>
-              ) : (
-                <p className="text-gray-400 text-xs font-semibold">
-                  Resend code in <strong className="text-gray-700">{resendTimer}s</strong>
-                </p>
-              )}
-            </div>
-            {resendMsg && <p className="text-green-600 text-xs font-bold text-center mb-2">{resendMsg}</p>}
-          </div>
-
-          <button
-            type="submit"
-            disabled={isVerifyingOtp}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base flex items-center justify-center gap-2"
-          >
-            {isVerifyingOtp ? (
+            {isSendingOtp ? (
               <>
                 <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>Verifying...</span>
+                <span>Sending OTP...</span>
               </>
             ) : (
-              <span>Verify & Continue →</span>
+              <span>Verify Mobile Number →</span>
             )}
           </button>
-        </form>
+        </div>
       </div>
     );
   }
 
   // -------------------------------------------------------------
-  // NEW USER STEP 4: KYC / IDENTITY VERIFICATION (Mandatory)
+  // NEW USER STEP: KYC / IDENTITY VERIFICATION
   // -------------------------------------------------------------
   if (step === 'identity-verification') {
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Identity Verification', 'register-otp')}
+      <div className="flex flex-col h-full bg-slate-100">
+        {renderHeader('Identity Verification', 'register-otp')}
         <div className="flex-1 bg-white px-6 pt-6 pb-10 flex flex-col justify-between overflow-y-auto">
           <div>
-            <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mb-3 text-2xl">
+            <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mb-3 text-2xl shadow-xs">
               🛡️
             </div>
-            <h2 className="text-2xl font-black text-gray-900 mb-1.5">Verify your identity</h2>
-            <p className="text-gray-500 text-xs leading-relaxed mb-6">
-              Identity verification helps keep your PayVerse account secure.
+            <h2 className="text-2xl font-black text-slate-900 mb-1.5">Verify Identity</h2>
+            <p className="text-slate-500 text-xs leading-relaxed mb-6">
+              Mandatory RBI compliant identity verification for secure payments.
             </p>
 
             <div className="mb-5">
-              <label className="text-xs font-bold text-gray-700 mb-1.5 block">
+              <label className="text-xs font-bold text-slate-700 mb-1.5 block">
                 Aadhaar / Government ID Number <span className="text-red-500">*</span>
               </label>
 
-              {/* Aadhaar Input Display */}
-              <div className={`relative border-2 rounded-2xl px-4 py-3.5 transition-colors ${error ? 'border-red-400 bg-red-50/20' : 'border-gray-200 focus-within:border-blue-500 bg-white'}`}>
+              <div className={`relative border-2 rounded-2xl px-4 py-3.5 transition-colors ${error ? 'border-red-400 bg-red-50/20' : 'border-slate-200 focus-within:border-blue-600 bg-slate-50 focus-within:bg-white'}`}>
                 <input
                   type="text"
                   inputMode="numeric"
                   maxLength={12}
-                  placeholder="Enter 12-digit ID number"
+                  placeholder="12-digit Aadhaar ID number"
                   value={aadhaarInput}
                   onChange={handleAadhaarChange}
-                  className="w-full text-lg font-mono font-bold text-gray-900 tracking-wider focus:outline-none bg-transparent"
+                  className="w-full text-lg font-mono font-bold text-slate-900 tracking-wider focus:outline-none bg-transparent"
                   autoFocus
                 />
               </div>
-              <p className="text-[11px] text-gray-400 font-medium mt-1.5">
+              <p className="text-[11px] text-slate-400 font-medium mt-1.5">
                 Demo Mode: Enter any 12-digit number (e.g. 1234 5678 9012)
               </p>
               {error && <p className="text-red-500 text-xs font-bold mt-2 ml-1">{error}</p>}
             </div>
 
-            {/* Why do we need this card */}
             <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 mb-4">
               <div className="flex items-center gap-2 mb-1.5">
-                <span className="text-blue-600 font-bold text-xs">🔒 Why do we need this?</span>
+                <span className="text-blue-600 font-bold text-xs">🔒 256-Bit Security Guarantee</span>
               </div>
-              <p className="text-gray-600 text-xs leading-relaxed">
-                Your identity information is used only for account verification and security.
+              <p className="text-slate-600 text-xs leading-relaxed">
+                Your ID details are encrypted and processed strictly according to sandbox regulations.
               </p>
             </div>
           </div>
 
           <button
             onClick={handleIdentityVerification}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
+            className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base"
           >
             Verify Identity →
           </button>
@@ -983,26 +1132,26 @@ export function LoginScreen() {
   }
 
   // -------------------------------------------------------------
-  // TEEN STEP 5A: TEEN INTRO CARD
+  // TEEN STEP: INTRO CARD
   // -------------------------------------------------------------
   if (step === 'teen-intro') {
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Teen Account', 'identity-verification')}
-        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
+      <div className="flex flex-col h-full bg-slate-100">
+        {renderHeader('Teen Account', 'identity-verification')}
+        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between overflow-y-auto">
           <div className="text-center my-auto">
             <div className="w-20 h-20 bg-gradient-to-tr from-blue-500 to-indigo-600 text-white rounded-3xl flex items-center justify-center mx-auto mb-6 text-4xl shadow-xl shadow-blue-500/30">
               🚀
             </div>
-            <h2 className="text-2xl font-black text-gray-900 mb-3">Set up your Teen Account</h2>
-            <p className="text-gray-500 text-sm leading-relaxed max-w-[280px] mx-auto font-medium">
-              PayVerse is designed to help you manage pocket money, make payments, and build better saving habits.
+            <h2 className="text-2xl font-black text-slate-900 mb-3">Set up Teen Account</h2>
+            <p className="text-slate-500 text-sm leading-relaxed max-w-[280px] mx-auto font-medium">
+              PayVerse is designed to help you manage pocket money, make payments, and build smart financial habits.
             </p>
           </div>
 
           <button
             onClick={() => setStep('guardian')}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
+            className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base"
           >
             Continue →
           </button>
@@ -1012,39 +1161,39 @@ export function LoginScreen() {
   }
 
   // -------------------------------------------------------------
-  // TEEN STEP 5B: PARENT / GUARDIAN SETUP
+  // TEEN STEP: GUARDIAN DETAILS
   // -------------------------------------------------------------
   if (step === 'guardian') {
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Parent Guardian', 'teen-intro')}
-        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
+      <div className="flex flex-col h-full bg-slate-100">
+        {renderHeader('Parent Guardian', 'teen-intro')}
+        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between overflow-y-auto">
           <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">Parent / Guardian</h2>
-            <p className="text-gray-500 text-xs mb-6">Add your parent or guardian details for account management</p>
+            <h2 className="text-2xl font-black text-slate-900 mb-2">Parent / Guardian Details</h2>
+            <p className="text-slate-500 text-xs mb-6">Add guardian info for teen limit management</p>
 
             <div className="space-y-4 mb-4">
               <div>
-                <label className="text-xs font-bold text-gray-700 mb-1.5 block">Parent / Guardian Name</label>
+                <label className="text-xs font-bold text-slate-700 mb-1.5 block">Parent / Guardian Name</label>
                 <input
                   type="text"
                   placeholder="e.g. Sunita Sharma"
                   value={guardianName}
                   onChange={e => setGuardianName(e.target.value)}
-                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3.5 text-base font-semibold text-gray-900 focus:border-blue-500 focus:outline-none"
+                  className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3.5 text-base font-semibold text-slate-900 focus:border-blue-600 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-gray-700 mb-1.5 block">Parent / Guardian Mobile Number</label>
-                <div className="flex items-center border-2 border-gray-200 rounded-2xl overflow-hidden focus-within:border-blue-500">
-                  <span className="bg-gray-50 px-4 py-4 text-gray-700 font-bold text-sm border-r border-gray-200">+91</span>
+                <label className="text-xs font-bold text-slate-700 mb-1.5 block">Parent / Guardian Mobile Number</label>
+                <div className="flex items-center border-2 border-slate-200 rounded-2xl overflow-hidden focus-within:border-blue-600">
+                  <span className="bg-slate-50 px-4 py-4 text-slate-700 font-bold text-sm border-r border-slate-200">+91</span>
                   <input
                     type="tel"
                     placeholder="Guardian 10-digit number"
                     value={guardianPhone}
                     onChange={e => { setGuardianPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setError(''); }}
-                    className="flex-1 px-4 py-4 text-gray-900 placeholder-gray-400 focus:outline-none text-base font-semibold"
+                    className="flex-1 px-4 py-4 text-slate-900 placeholder-slate-400 focus:outline-none text-base font-semibold"
                     maxLength={10}
                   />
                 </div>
@@ -1056,7 +1205,7 @@ export function LoginScreen() {
 
           <button
             onClick={handleGuardianContinue}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
+            className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base"
           >
             Continue →
           </button>
@@ -1066,16 +1215,16 @@ export function LoginScreen() {
   }
 
   // -------------------------------------------------------------
-  // TEEN STEP 6: POCKET MONEY SETUP
+  // TEEN STEP: POCKET MONEY PREFERENCE
   // -------------------------------------------------------------
   if (step === 'pocket-money') {
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Pocket Money', 'guardian')}
-        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
+      <div className="flex flex-col h-full bg-slate-100">
+        {renderHeader('Pocket Money', 'guardian')}
+        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between overflow-y-auto">
           <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">Do you receive pocket money?</h2>
-            <p className="text-gray-500 text-xs mb-6">Helps us set up your allowance tracker</p>
+            <h2 className="text-2xl font-black text-slate-900 mb-2">Do you receive pocket money?</h2>
+            <p className="text-slate-500 text-xs mb-6">Helps us set up your allowance tracker</p>
 
             <div className="grid grid-cols-3 gap-3 mb-6">
               {[
@@ -1087,8 +1236,8 @@ export function LoginScreen() {
                   key={opt.key}
                   onClick={() => setHasPocketMoney(opt.key as any)}
                   className={`p-4 rounded-2xl border-2 font-bold text-xs transition-all ${hasPocketMoney === opt.key
-                    ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-sm'
-                    : 'border-gray-200 text-gray-700 hover:border-gray-300'
+                    ? 'border-blue-600 bg-blue-50 text-blue-700 shadow-xs'
+                    : 'border-slate-200 text-slate-700 hover:border-slate-300'
                     }`}
                 >
                   {opt.label}
@@ -1098,7 +1247,7 @@ export function LoginScreen() {
 
             {hasPocketMoney === 'yes' && (
               <div className="animate-fade-slide-up">
-                <h3 className="text-xs font-bold text-gray-900 mb-3">How much do you usually receive?</h3>
+                <h3 className="text-xs font-bold text-slate-900 mb-3">How much do you usually receive?</h3>
                 <div className="grid grid-cols-2 gap-2.5">
                   {['Below ₹500', '₹500 – ₹1,000', '₹1,000 – ₹2,500', '₹2,500+'].map(range => (
                     <button
@@ -1106,7 +1255,7 @@ export function LoginScreen() {
                       onClick={() => setPocketMoneyRange(range)}
                       className={`p-3.5 rounded-2xl border-2 font-bold text-xs text-left transition-all ${pocketMoneyRange === range
                         ? 'border-blue-600 bg-blue-50 text-blue-700'
-                        : 'border-gray-200 text-gray-700 hover:border-gray-300'
+                        : 'border-slate-200 text-slate-700 hover:border-slate-300'
                         }`}
                     >
                       {range}
@@ -1119,7 +1268,7 @@ export function LoginScreen() {
 
           <button
             onClick={() => setStep('purpose')}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
+            className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base"
           >
             Continue →
           </button>
@@ -1129,7 +1278,7 @@ export function LoginScreen() {
   }
 
   // -------------------------------------------------------------
-  // STEP 7: PAYMENT USAGE PREFERENCES
+  // STEP: PREFERENCES / PURPOSE
   // -------------------------------------------------------------
   if (step === 'purpose') {
     const purposeOptions = [
@@ -1143,12 +1292,12 @@ export function LoginScreen() {
     ];
 
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Preferences', userType === 'teen' ? 'pocket-money' : 'identity-verification')}
-        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
+      <div className="flex flex-col h-full bg-slate-100">
+        {renderHeader('Preferences', userType === 'teen' ? 'pocket-money' : 'identity-verification')}
+        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between overflow-y-auto">
           <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">What will you use PayVerse for?</h2>
-            <p className="text-gray-500 text-xs mb-6">Select all options that apply to customize your quick actions</p>
+            <h2 className="text-2xl font-black text-slate-900 mb-2">What will you use PayVerse for?</h2>
+            <p className="text-slate-500 text-xs mb-6">Select your top features for quick action setup</p>
 
             <div className="flex flex-wrap gap-2.5 mb-6">
               {purposeOptions.map(p => {
@@ -1158,8 +1307,8 @@ export function LoginScreen() {
                     key={p}
                     onClick={() => togglePurpose(p)}
                     className={`px-4 py-3 rounded-2xl border-2 font-bold text-xs transition-all flex items-center gap-2 ${isSelected
-                      ? 'border-blue-600 bg-blue-600 text-white shadow-md'
-                      : 'border-gray-200 text-gray-700 bg-white hover:border-gray-300'
+                      ? 'border-blue-600 bg-blue-600 text-white shadow-sm'
+                      : 'border-slate-200 text-slate-700 bg-white hover:border-slate-300'
                       }`}
                   >
                     <span>{p}</span>
@@ -1172,7 +1321,7 @@ export function LoginScreen() {
 
           <button
             onClick={() => setStep('create-pin')}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
+            className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base"
           >
             Continue →
           </button>
@@ -1182,42 +1331,51 @@ export function LoginScreen() {
   }
 
   // -------------------------------------------------------------
-  // STEP 8: CREATE PAYVERSE PIN
+  // STEP: CREATE 4-DIGIT SECURITY PIN
   // -------------------------------------------------------------
   if (step === 'create-pin') {
     return (
-      <div className="flex flex-col h-full bg-slate-50">
-        {renderHeaderWithProgress('Create PIN', 'purpose')}
-        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between">
+      <div className="flex flex-col h-full bg-slate-100">
+        {renderHeader('Create PIN', 'purpose')}
+        <div className="flex-1 bg-white px-6 pt-8 pb-10 flex flex-col justify-between overflow-y-auto">
           <div>
-            <h2 className="text-2xl font-black text-gray-900 mb-2">Secure your PayVerse account</h2>
-            <p className="text-gray-500 text-xs mb-6">Create a 4-digit PayVerse PIN to authorize money transfers</p>
+            <h2 className="text-2xl font-black text-slate-900 mb-2">Create Security PIN</h2>
+            <p className="text-slate-500 text-xs mb-6">Create a 4-digit PayVerse PIN to authorize money transfers</p>
 
             <div className="space-y-4 mb-6">
               <div>
-                <label className="text-xs font-bold text-gray-700 mb-1.5 block">Create 4-Digit PayVerse PIN</label>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={4}
-                  placeholder="● ● ● ●"
-                  value={newPin}
-                  onChange={e => { setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4)); setError(''); }}
-                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3.5 text-center text-2xl font-bold tracking-widest focus:border-blue-500 focus:outline-none"
-                  autoFocus
-                />
+                <label className="text-xs font-bold text-slate-700 mb-1.5 block">Create 4-Digit PayVerse PIN</label>
+                <div className="relative">
+                  <input
+                    type={showNewPin ? 'text' : 'password'}
+                    inputMode="numeric"
+                    maxLength={4}
+                    placeholder="● ● ● ●"
+                    value={newPin}
+                    onChange={e => { setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4)); setError(''); }}
+                    className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3.5 text-center text-2xl font-bold tracking-widest focus:border-blue-600 focus:outline-none bg-slate-50"
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPin(v => !v)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    {showNewPin ? <IconEyeOff size={18} /> : <IconEye size={18} />}
+                  </button>
+                </div>
               </div>
 
               <div>
-                <label className="text-xs font-bold text-gray-700 mb-1.5 block">Confirm 4-Digit PIN</label>
+                <label className="text-xs font-bold text-slate-700 mb-1.5 block">Confirm 4-Digit PIN</label>
                 <input
-                  type="password"
+                  type={showNewPin ? 'text' : 'password'}
                   inputMode="numeric"
                   maxLength={4}
                   placeholder="● ● ● ●"
                   value={confirmPin}
                   onChange={e => { setConfirmPin(e.target.value.replace(/\D/g, '').slice(0, 4)); setError(''); }}
-                  className="w-full border-2 border-gray-200 rounded-2xl px-4 py-3.5 text-center text-2xl font-bold tracking-widest focus:border-blue-500 focus:outline-none"
+                  className="w-full border-2 border-slate-200 rounded-2xl px-4 py-3.5 text-center text-2xl font-bold tracking-widest focus:border-blue-600 focus:outline-none bg-slate-50"
                 />
               </div>
             </div>
@@ -1227,7 +1385,7 @@ export function LoginScreen() {
 
           <button
             onClick={handleCreatePIN}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base"
+            className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base"
           >
             Create PIN →
           </button>
@@ -1237,59 +1395,58 @@ export function LoginScreen() {
   }
 
   // -------------------------------------------------------------
-  // STEP 9: ACCOUNT CREATED SUCCESS SCREEN
+  // FINAL STEP: ACCOUNT CREATED SUCCESS CARD
   // -------------------------------------------------------------
   return (
-    <div className="flex flex-col h-full bg-white px-6 py-10 justify-between box-border">
+    <div className="flex flex-col h-full bg-white px-6 py-10 justify-between box-border overflow-y-auto">
       {/* Top Banner */}
       <div className="flex flex-col items-center pt-4 text-center">
-        {/* Success Icon Animation */}
         <div className="relative mb-6">
-          <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center text-5xl shadow-xl shadow-blue-500/30 animate-pulse">
+          <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-indigo-600 via-blue-600 to-violet-700 text-white flex items-center justify-center text-5xl shadow-xl shadow-blue-500/30 animate-pulse">
             🎉
           </div>
-          <div className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-green-500 text-white flex items-center justify-center text-lg border-2 border-white shadow-md">
+          <div className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-emerald-500 text-white flex items-center justify-center text-lg border-2 border-white shadow-md">
             ✓
           </div>
         </div>
 
-        <h1 className="text-2xl font-black text-gray-900 mb-2">Welcome to PayVerse 🎉</h1>
-        <p className="text-gray-500 text-sm font-semibold">Your PayVerse account is ready.</p>
+        <h1 className="text-2xl font-black text-slate-900 mb-2">Welcome to PayVerse 🎉</h1>
+        <p className="text-slate-500 text-sm font-semibold">Your digital wallet is active and ready to use.</p>
       </div>
 
       {/* Account Details Card */}
       <div className="bg-slate-50 border border-slate-200/80 rounded-3xl p-5 my-auto space-y-3">
-        <div className="flex items-center justify-between border-b border-gray-200/80 pb-3">
-          <span className="text-xs text-gray-500 font-medium">Account Name</span>
-          <span className="text-sm font-black text-gray-900">{firstName} {lastName}</span>
+        <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
+          <span className="text-xs text-slate-500 font-medium">Account Name</span>
+          <span className="text-sm font-black text-slate-900">{firstName} {lastName}</span>
         </div>
 
-        <div className="flex items-center justify-between border-b border-gray-200/80 pb-3">
-          <span className="text-xs text-gray-500 font-medium">Account Type</span>
-          <span className="text-xs font-extrabold text-blue-700 bg-blue-100 px-2.5 py-1 rounded-full uppercase">
+        <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
+          <span className="text-xs text-slate-500 font-medium">Account Type</span>
+          <span className="text-xs font-extrabold text-blue-700 bg-blue-100 px-3 py-1 rounded-full uppercase">
             {userType === 'teen' ? '👦 Teen Account' : '👤 Adult Account'}
           </span>
         </div>
 
-        <div className="flex items-center justify-between border-b border-gray-200/80 pb-3">
-          <span className="text-xs text-gray-500 font-medium">Identity Verification</span>
-          <span className="text-xs font-bold text-green-700 bg-green-100 px-2.5 py-1 rounded-full flex items-center gap-1">
+        <div className="flex items-center justify-between border-b border-slate-200/80 pb-3">
+          <span className="text-xs text-slate-500 font-medium">Identity Verification</span>
+          <span className="text-xs font-bold text-emerald-700 bg-emerald-100 px-3 py-1 rounded-full flex items-center gap-1">
             ✓ VERIFIED ({maskedAadhaar || 'XXXX XXXX 1234'})
           </span>
         </div>
 
         <div className="flex items-center justify-between pt-1">
-          <span className="text-xs text-gray-500 font-medium">Opening Balance</span>
-          <span className="text-base font-black text-green-600">₹5,000</span>
+          <span className="text-xs text-slate-500 font-medium">Opening Balance</span>
+          <span className="text-base font-black text-emerald-600">₹5,000</span>
         </div>
       </div>
 
-      {/* Final Go Home Button */}
+      {/* Final Entry Button */}
       <button
         type="button"
         onClick={handleCompleteRegistration}
         disabled={isCompletingRegistration}
-        className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all text-base relative z-30 cursor-pointer pointer-events-auto flex items-center justify-center gap-2"
+        className="w-full bg-gradient-to-r from-indigo-600 via-blue-600 to-violet-700 text-white font-black py-4 rounded-2xl shadow-lg shadow-blue-600/30 active:scale-98 transition-all text-base flex items-center justify-center gap-2 cursor-pointer"
       >
         {isCompletingRegistration ? (
           <>

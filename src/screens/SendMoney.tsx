@@ -19,6 +19,52 @@ export default function SendMoneyScreen() {
   const [txId, setTxId] = useState('');
   const processingRef = useRef(false);
 
+  // Registered Users list state
+  const [registeredUsers, setRegisteredUsers] = useState<User[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(true);
+  const [isSearchingApi, setIsSearchingApi] = useState<boolean>(false);
+
+  // Load registered users on mount
+  useEffect(() => {
+    let isMounted = true;
+    const loadUsers = async () => {
+      setIsLoadingUsers(true);
+      try {
+        const res = await api.getUsers();
+        if (isMounted) {
+          if (res && res.success && Array.isArray(res.users)) {
+            const mapped: User[] = res.users.map((u: any) => ({
+              id: u.payverseId || u._id || u.id || u.phone,
+              name: u.name,
+              phone: u.phone,
+              payverseId: u.payverseId || (u.name ? `${u.name.toLowerCase().replace(/\s+/g, '')}@payverse` : undefined),
+              balance: 0,
+              pin: '1234',
+              isOnboarded: true,
+              onboardingStatus: 'completed',
+            }));
+            setRegisteredUsers(mapped);
+          } else {
+            // Fallback to local store users excluding current user
+            const fallback = app.state.users.filter(u => u.id !== user.id && u.phone !== user.phone);
+            setRegisteredUsers(fallback);
+          }
+        }
+      } catch {
+        if (isMounted) {
+          const fallback = app.state.users.filter(u => u.id !== user.id && u.phone !== user.phone);
+          setRegisteredUsers(fallback);
+        }
+      } finally {
+        if (isMounted) setIsLoadingUsers(false);
+      }
+    };
+
+    loadUsers();
+    return () => { isMounted = false; };
+  }, [user.id]);
+
+  // Handle URL navigation params (e.g. from QR code or deep links)
   useEffect(() => {
     const params = app.currentScreen.params;
     if (params) {
@@ -58,25 +104,46 @@ export default function SendMoneyScreen() {
     }
   }, [app.currentScreen]);
 
-  const results = app.searchUsers(query);
-
+  // Select contact handler
   const handleSelectRecipient = (u: User) => {
     setRecipient(u);
     setStep('amount');
     setQuery('');
   };
 
+  // Live filter results
+  const filteredUsers = registeredUsers.filter(u => {
+    if (u.id === user.id || u.phone === user.phone) return false;
+    if (!query.trim()) return true;
+
+    const q = query.trim().toLowerCase();
+    const qDigits = q.replace(/\D/g, '');
+    const uName = (u.name || '').toLowerCase();
+    const uPayverse = (u.payverseId || u.id || '').toLowerCase();
+    const uPhone = (u.phone || '').replace(/\D/g, '');
+
+    return (
+      uName.includes(q) ||
+      uPayverse.includes(q) ||
+      (qDigits.length > 0 && uPhone.includes(qDigits)) ||
+      (u.phone && u.phone.toLowerCase().includes(q))
+    );
+  });
+
+  // Dynamic Search API Submit
   const handleSearchSubmit = async () => {
     if (!query.trim()) return;
     const cleanQuery = query.trim();
 
-    if (results.length > 0) {
-      handleSelectRecipient(results[0]);
+    if (filteredUsers.length > 0) {
+      handleSelectRecipient(filteredUsers[0]);
       return;
     }
 
+    setIsSearchingApi(true);
     try {
       const res = await api.findUser(cleanQuery);
+      setIsSearchingApi(false);
       if (res && res.success && res.user) {
         const u = res.user;
         const recipientUser: User = {
@@ -90,8 +157,13 @@ export default function SendMoneyScreen() {
           onboardingStatus: 'completed',
         };
         handleSelectRecipient(recipientUser);
+      } else {
+        app.showToast('User Not Found', `No PayVerse account found matching "${cleanQuery}"`, 'error');
       }
-    } catch {}
+    } catch {
+      setIsSearchingApi(false);
+      app.showToast('Search Error', 'Unable to look up user on PayVerse network', 'error');
+    }
   };
 
   const handleAmountNext = () => {
@@ -243,32 +315,67 @@ export default function SendMoneyScreen() {
             />
           </div>
 
-          {query === '' ? (
+          {isLoadingUsers ? (
+            <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-xs p-4 space-y-3">
+              {[1, 2, 3, 4].map(n => (
+                <div key={n} className="flex items-center justify-between animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <div className="w-11 h-11 rounded-2xl bg-slate-200" />
+                    <div className="space-y-1.5">
+                      <div className="w-28 h-3.5 bg-slate-200 rounded-full" />
+                      <div className="w-20 h-3 bg-slate-100 rounded-full" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : query === '' ? (
             <div className="w-full max-w-full box-border">
-              <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">All Contacts</p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">All Contacts ({filteredUsers.length})</p>
+                <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">REAL-TIME</span>
+              </div>
               <div className="bg-white rounded-2xl overflow-hidden border border-gray-100 w-full max-w-full box-border shadow-xs">
-                {app.state.users.filter(u => u.id !== app.state.currentUserId).map((u, i, arr) => (
-                  <UserRow key={u.id} user={u} onSelect={handleSelectRecipient} last={i === arr.length - 1} />
-                ))}
+                {filteredUsers.length === 0 ? (
+                  <div className="text-center py-8 px-4 text-gray-400 text-xs">
+                    No registered contacts found on PayVerse yet.
+                  </div>
+                ) : (
+                  filteredUsers.map((u, i) => (
+                    <UserRow key={u.id || u.phone} user={u} onSelect={handleSelectRecipient} last={i === filteredUsers.length - 1} />
+                  ))
+                )}
               </div>
             </div>
-          ) : results.length > 0 ? (
+          ) : filteredUsers.length > 0 ? (
             <div className="w-full max-w-full box-border">
-              <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">{results.length} result{results.length > 1 ? 's' : ''}</p>
+              <p className="text-xs font-semibold text-gray-400 mb-3 uppercase tracking-wide">
+                {filteredUsers.length} Search Result{filteredUsers.length > 1 ? 's' : ''}
+              </p>
               <div className="bg-white rounded-2xl overflow-hidden border border-gray-100 w-full max-w-full box-border shadow-xs">
-                {results.map((u, i) => <UserRow key={u.id} user={u} onSelect={handleSelectRecipient} last={i === results.length - 1} />)}
+                {filteredUsers.map((u, i) => (
+                  <UserRow key={u.id || u.phone} user={u} onSelect={handleSelectRecipient} last={i === filteredUsers.length - 1} />
+                ))}
               </div>
             </div>
           ) : (
             <div className="text-center py-10 px-4 bg-white rounded-2xl border border-gray-100 w-full max-w-full box-border shadow-xs">
               <div className="text-4xl mb-2">🔍</div>
-              <p className="text-gray-800 font-bold text-sm">No local contacts found</p>
+              <p className="text-gray-800 font-bold text-sm">No contact matching "{query}"</p>
               <p className="text-gray-400 text-xs mt-1 mb-4">Search PayVerse network for recipient</p>
               <button
                 onClick={handleSearchSubmit}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-5 py-3 rounded-xl shadow-md shadow-blue-200 active:scale-95 transition-all cursor-pointer"
+                disabled={isSearchingApi}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-5 py-3 rounded-xl shadow-md shadow-blue-200 active:scale-95 transition-all cursor-pointer flex items-center justify-center gap-2 mx-auto"
               >
-                Search PayVerse Network →
+                {isSearchingApi ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <span>Searching Network...</span>
+                  </>
+                ) : (
+                  <span>Search PayVerse Network →</span>
+                )}
               </button>
             </div>
           )}
@@ -294,7 +401,7 @@ export default function SendMoneyScreen() {
                   </span>
                 </div>
                 <p className="text-green-700 text-xs font-medium truncate mt-1">
-                  Sending to: <strong className="font-bold text-gray-900">{recipient.name}</strong> (+91 {recipient.phone || recipient.id})
+                  Sending to: <strong className="font-bold text-gray-900">{recipient.name}</strong> ({recipient.payverseId || recipient.id} • +91 {recipient.phone})
                 </p>
               </div>
               <button onClick={() => setStep('search')} className="ml-auto text-blue-600 text-sm font-semibold hover:underline flex-shrink-0">
@@ -343,7 +450,7 @@ export default function SendMoneyScreen() {
           <button
             onClick={handleAmountNext}
             disabled={!amountNum || amountNum <= 0 || isInsufficientBalance}
-            className="w-full max-w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed box-border"
+            className="w-full max-w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed box-border cursor-pointer"
           >
             Continue
           </button>
@@ -361,7 +468,8 @@ export default function SendMoneyScreen() {
             <div className="p-5 space-y-4">
               {[
                 { label: 'To', value: recipient.name },
-                { label: 'PayVerse ID', value: recipient.id },
+                { label: 'PayVerse ID', value: recipient.payverseId || recipient.id },
+                { label: 'Mobile Number', value: `+91 ${recipient.phone || recipient.id}` },
                 { label: 'Note', value: note || '—' },
                 { label: 'From', value: user.name },
                 { label: 'Available Balance', value: fmt(user.balance) },
@@ -377,7 +485,7 @@ export default function SendMoneyScreen() {
 
           <button
             onClick={() => setStep('pin')}
-            className="w-full max-w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform box-border"
+            className="w-full max-w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform box-border cursor-pointer"
           >
             Pay {fmt(amountNum)}
           </button>
@@ -405,19 +513,24 @@ export default function SendMoneyScreen() {
 }
 
 function UserRow({ user, onSelect, last }: { user: User; onSelect: (u: User) => void; last: boolean }) {
+  const displayId = user.payverseId || user.id;
+  const displayPhone = user.phone ? `+91 ${user.phone}` : '';
+
   return (
     <button
       onClick={() => onSelect(user)}
-      className={`w-full flex items-center gap-3 px-4 py-3.5 active:bg-gray-50 transition-colors ${!last ? 'border-b border-gray-50' : ''}`}
+      className={`w-full flex items-center gap-3 px-4 py-3.5 hover:bg-slate-50 active:bg-slate-100 transition-colors text-left cursor-pointer ${!last ? 'border-b border-gray-100' : ''}`}
     >
-      <div className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${avatarColor(user.name)} flex items-center justify-center flex-shrink-0`}>
-        <span className="text-white font-bold text-sm">{initials(user.name)}</span>
+      <div className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${avatarColor(user.name)} flex items-center justify-center flex-shrink-0 text-white font-bold text-sm shadow-xs`}>
+        <span>{initials(user.name)}</span>
       </div>
-      <div className="flex-1 text-left">
-        <p className="text-gray-900 font-semibold text-sm">{user.name}</p>
-        <p className="text-gray-400 text-xs">{user.id} • +91 {user.phone}</p>
+      <div className="flex-1 min-w-0 text-left">
+        <p className="text-gray-900 font-bold text-sm truncate">{user.name}</p>
+        <p className="text-gray-400 text-xs truncate">
+          {displayId} {displayPhone ? `• ${displayPhone}` : ''}
+        </p>
       </div>
-      <svg className="w-4 h-4 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <svg className="w-4 h-4 text-gray-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
       </svg>
     </button>
