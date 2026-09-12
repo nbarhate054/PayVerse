@@ -45,7 +45,6 @@ export default function SendMoneyScreen() {
             }));
             setRegisteredUsers(mapped);
           } else {
-            // Fallback to local store users excluding current user
             const fallback = app.state.users.filter(u => u.id !== user.id && u.phone !== user.phone);
             setRegisteredUsers(fallback);
           }
@@ -64,7 +63,7 @@ export default function SendMoneyScreen() {
     return () => { isMounted = false; };
   }, [user.id]);
 
-  // Handle URL navigation params (e.g. from QR code or deep links)
+  // Handle URL navigation params
   useEffect(() => {
     const params = app.currentScreen.params;
     if (params) {
@@ -104,14 +103,12 @@ export default function SendMoneyScreen() {
     }
   }, [app.currentScreen]);
 
-  // Select contact handler
   const handleSelectRecipient = (u: User) => {
     setRecipient(u);
     setStep('amount');
     setQuery('');
   };
 
-  // Live filter results
   const filteredUsers = registeredUsers.filter(u => {
     if (u.id === user.id || u.phone === user.phone) return false;
     if (!query.trim()) return true;
@@ -130,7 +127,6 @@ export default function SendMoneyScreen() {
     );
   });
 
-  // Dynamic Search API Submit
   const handleSearchSubmit = async () => {
     if (!query.trim()) return;
     const cleanQuery = query.trim();
@@ -192,12 +188,12 @@ export default function SendMoneyScreen() {
         setTxId(result.transactionId!);
         setStep('success');
       } else {
-        setPinError(result.error ?? 'Transaction failed');
+        setPinError(result.error ?? 'Transaction failed. Incorrect PIN.');
         setStep('pin');
       }
     } catch (err: any) {
       processingRef.current = false;
-      setPinError(err.message || 'Transaction failed');
+      setPinError(err.message || 'Transaction failed. Incorrect PIN.');
       setStep('pin');
     }
   };
@@ -209,7 +205,7 @@ export default function SendMoneyScreen() {
     if (step === 'search') app.goBack();
     else if (step === 'amount') setStep('search');
     else if (step === 'confirm') setStep('amount');
-    else if (step === 'pin') setStep('confirm');
+    else if (step === 'pin') { setStep('confirm'); setPinError(''); }
   };
 
   const BackBtn = () => (
@@ -220,68 +216,80 @@ export default function SendMoneyScreen() {
     </button>
   );
 
+  // STATE 2: PROCESSING (Keeps processing loader card mounted until API resolves)
   if (step === 'processing') {
     return (
-      <div className="flex flex-col h-full items-center justify-center bg-white px-8">
-        <div className="w-20 h-20 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin-ring mb-6" />
-        <p className="text-gray-900 font-bold text-xl">Processing...</p>
-        <p className="text-gray-500 text-sm mt-2 animate-pulse-soft">Please wait while we complete your payment</p>
+      <div
+        className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="bg-white rounded-3xl w-full max-w-sm p-6 flex flex-col items-center justify-center text-center shadow-2xl relative my-auto min-h-[380px] max-h-[92vh] overflow-y-auto space-y-4"
+        >
+          <div className="w-20 h-20 rounded-full border-4 border-blue-100 border-t-blue-600 animate-spin mb-2 mx-auto shrink-0" />
+          <h3 className="text-gray-900 font-extrabold text-xl">Processing Payment...</h3>
+          <p className="text-gray-500 text-xs font-medium animate-pulse">
+            Authorising transfer of <strong className="text-gray-800">{fmt(amountNum)}</strong> to {recipient?.name}...
+          </p>
+        </div>
       </div>
     );
   }
 
+  // STATE 3: SUCCESS (Stays until user explicitly clicks "Done")
   if (step === 'success') {
     return (
-      <div className="flex flex-col h-full bg-white">
-        <div className="flex-1 flex flex-col items-center justify-center px-8">
+      <div className="flex flex-col h-full bg-slate-50 overflow-y-auto">
+        <div className="flex-1 flex flex-col items-center justify-center p-6 w-full max-w-md mx-auto my-auto box-border">
           <div className="animate-scale-in mb-6">
-            <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center">
+            <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center shadow-md">
               <svg className="w-12 h-12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth={2.5}>
                 <path className="animate-checkmark" d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>
           </div>
-          <div className="animate-fade-slide-up text-center">
-            <p className="text-gray-500 text-sm font-medium mb-1">Payment Successful</p>
+          <div className="animate-fade-slide-up text-center mb-6">
+            <p className="text-gray-500 text-xs font-bold uppercase tracking-wider mb-1">Payment Successful</p>
             <p className="text-gray-900 text-4xl font-black mb-1">{fmt(amountNum)}</p>
-            <p className="text-gray-500 text-sm">Sent to <strong className="text-gray-700">{recipient?.name}</strong></p>
+            <p className="text-gray-500 text-sm font-medium">Sent to <strong className="text-gray-800">{recipient?.name}</strong></p>
           </div>
 
-          <div className="w-full mt-8 bg-gray-50 rounded-2xl p-4 animate-fade-slide-up space-y-3">
+          <div className="w-full bg-white rounded-3xl p-5 border border-gray-100 shadow-sm space-y-3 mb-6 box-border">
             {[
               { label: 'Transaction ID', value: txId },
               { label: 'Sent to', value: `${recipient?.name} (+91 ${recipient?.phone || recipient?.id})` },
               { label: 'New Balance', value: fmt(user.balance) },
               { label: 'Note', value: note || '—' },
             ].map(({ label, value }) => (
-              <div key={label} className="flex justify-between">
-                <span className="text-gray-500 text-sm">{label}</span>
-                <span className="text-gray-900 text-sm font-semibold text-right max-w-[60%] truncate">{value}</span>
+              <div key={label} className="flex justify-between items-center text-xs">
+                <span className="text-gray-500 font-medium">{label}</span>
+                <span className="text-gray-900 font-bold truncate max-w-[60%] text-right">{value}</span>
               </div>
             ))}
           </div>
-        </div>
 
-        <div className="px-5 pb-8 flex flex-col gap-3">
-          <button
-            onClick={() => app.navigate('transaction-details', { transactionId: txId })}
-            className="w-full border-2 border-blue-600 text-blue-600 font-bold py-4 rounded-2xl active:scale-95 transition-transform"
-          >
-            View Transaction
-          </button>
-          <button
-            onClick={() => app.navigateRoot('home')}
-            className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform"
-          >
-            Done
-          </button>
+          <div className="w-full flex flex-col gap-3">
+            <button
+              onClick={() => app.navigate('transaction-details', { transactionId: txId })}
+              className="w-full border-2 border-blue-600 text-blue-600 font-bold py-3.5 rounded-2xl active:scale-95 transition-transform text-sm cursor-pointer"
+            >
+              View Transaction Details
+            </button>
+            <button
+              onClick={() => app.navigateRoot('home')}
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-3.5 rounded-2xl shadow-lg shadow-blue-200 active:scale-95 transition-transform text-sm cursor-pointer"
+            >
+              Done / Go to Dashboard →
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full w-full max-w-full bg-slate-50 overflow-x-hidden box-border mx-auto">
+    <div className="flex flex-col h-full w-full max-w-full bg-slate-50 overflow-x-hidden box-border mx-auto relative">
       {/* Header */}
       <div className="bg-white border-b border-gray-100 px-4 pt-12 pb-4 flex items-center gap-3 w-full max-w-full flex-shrink-0 box-border">
         <BackBtn />
@@ -495,17 +503,49 @@ export default function SendMoneyScreen() {
         </div>
       )}
 
-      {/* PIN step */}
+      {/* STATE 1 & STATE 4: PIN STEP MODAL (Responsive, un-cut-off card with form protection) */}
       {step === 'pin' && (
-        <div className="flex-1 flex flex-col items-center justify-center px-4 pb-10 w-full max-w-full box-border mx-auto">
-          <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mb-5 flex-shrink-0">
-            <svg className="w-7 h-7 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-          </div>
-          <p className="text-gray-900 font-bold text-lg mb-1 text-center">Enter PayVerse PIN</p>
-          <p className="text-gray-500 text-sm mb-8 text-center">Authorise payment of <strong>{fmt(amountNum)}</strong> to {recipient?.name}</p>
-          <PINInput onComplete={handlePIN} error={pinError} onReset={() => setPinError('')} />
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <form
+            onSubmit={(e) => { e.preventDefault(); }}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl w-full max-w-sm p-6 flex flex-col justify-between shadow-2xl relative my-auto min-h-[420px] max-h-[92vh] overflow-y-auto box-border"
+          >
+            <div className="flex flex-col items-center text-center w-full">
+              <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mb-3 shrink-0 shadow-xs">
+                <svg className="w-7 h-7 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <h2 className="text-gray-900 font-extrabold text-lg mb-1">Enter PayVerse PIN</h2>
+              <p className="text-gray-500 text-xs mb-5 leading-relaxed max-w-xs">
+                Authorise payment of <strong className="text-gray-900 font-bold">{fmt(amountNum)}</strong> to <strong className="text-gray-900 font-bold">{recipient?.name}</strong>
+              </p>
+
+              {pinError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-2xl w-full text-center animate-fade-slide-up">
+                  <p className="text-red-600 font-bold text-xs">⚠️ {pinError}</p>
+                </div>
+              )}
+
+              <PINInput
+                onComplete={handlePIN}
+                error={pinError}
+                onReset={() => setPinError('')}
+              />
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400 font-medium">
+              <span>🔒 256-Bit Encrypted</span>
+              <button
+                type="button"
+                onClick={() => { setStep('confirm'); setPinError(''); }}
+                className="text-blue-600 font-bold hover:underline"
+              >
+                Back to Confirm
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

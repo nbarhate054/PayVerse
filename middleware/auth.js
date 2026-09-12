@@ -2,26 +2,26 @@ import jwt from 'jsonwebtoken';
 
 export const authMiddleware = (req, res, next) => {
   try {
-    const authHeader = req.headers.authorization || req.headers.Authorization || req.header('Authorization');
+    const authHeader = req.header
+      ? (req.header('Authorization') || req.headers?.authorization || req.headers?.Authorization)
+      : (req.headers?.authorization || req.headers?.Authorization);
+
     if (!authHeader) {
-      return res.status(401).json({ success: false, message: 'Access denied. No token provided.' });
+      return res.status(401).json({ success: false, message: "No token provided" });
     }
 
-    let token = authHeader;
-    if (typeof authHeader === 'string') {
-      if (authHeader.toLowerCase().startsWith('bearer ')) {
-        token = authHeader.slice(7).trim();
-      }
+    const token = authHeader.toString().replace(/^Bearer\s+/i, '').trim();
+    if (!token || token === 'null' || token === 'undefined') {
+      return res.status(401).json({ success: false, message: "Invalid session token" });
     }
 
-    if (!token) {
-      return res.status(401).json({ success: false, message: 'Access denied. Token missing.' });
-    }
-
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'payverse_secret_key_123');
+    const secret = process.env.JWT_SECRET || 'payverse_secret_key_123';
+    const decoded = jwt.verify(token, secret);
     req.user = decoded;
     next();
-  } catch (error) {
-    return res.status(401).json({ success: false, message: 'Invalid or expired token.' });
+  } catch (err) {
+    return res.status(401).json({ success: false, message: "Session expired or invalid" });
   }
 };
+
+export default authMiddleware;

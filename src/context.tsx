@@ -248,21 +248,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!token) return;
     setIsLoadingData(true);
     try {
-      // Execute all 3 backend API calls concurrently in parallel
-      const [meRes, usersRes, historyRes] = await Promise.all([
+      // Execute all 4 backend API calls concurrently in parallel
+      const [meRes, usersRes, historyRes, balanceRes] = await Promise.all([
         api.getMe().catch(() => ({ success: false, user: null, wallet: null })),
         api.getUsers().catch(() => ({ success: false, users: [] })),
         api.getTransactionHistory().catch(() => ({ success: false, transactions: [] })),
+        api.getBalance().catch(() => ({ success: false, balance: null })),
       ]);
 
       if (meRes.success && meRes.user) {
+        const liveBalance = (balanceRes && balanceRes.success && typeof balanceRes.balance === 'number')
+          ? Number(balanceRes.balance)
+          : Number(meRes.wallet?.balance ?? 0);
+
         const userObj: User = {
           id: meRes.user.payverseId || meRes.user.id,
           name: meRes.user.name,
           email: meRes.user.email,
           phone: meRes.user.phone,
           payverseId: meRes.user.payverseId,
-          balance: meRes.wallet?.balance ?? 0,
+          balance: liveBalance,
           pin: meRes.user.pin || '1234',
           isOnboarded: true,
           onboardingStatus: 'completed',
@@ -488,6 +493,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const switchDemoUser = useCallback((userId: string) => {
+    setAuthToken(`demo_token_${userId}_${Date.now()}`);
     updateState(prev => ({ ...prev, currentUserId: userId }));
   }, [updateState]);
 
@@ -575,10 +581,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return { success: true, transactionId: txId };
         } else {
           const errMsg = res.message || 'Transfer failed.';
-          if (errMsg.includes('token') || errMsg.includes('Unauthorized')) {
-            return { success: false, error: 'Session expired. Please logout and login again.' };
-          }
           if (errMsg.toLowerCase().includes('insufficient balance')) {
+            return { success: false, error: errMsg };
+          }
+          if (errMsg.toLowerCase().includes('pin')) {
             return { success: false, error: errMsg };
           }
 
@@ -703,9 +709,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           return { success: true, transactionId: txId };
         } else {
           const errMsg = res.message || 'Failed to add money.';
-          if (errMsg.includes('token') || errMsg.includes('Unauthorized')) {
-            return { success: false, error: 'Session expired. Please logout and login again.' };
-          }
           // Demo fallback
           clearPinLock();
           const txId = generateTransactionId();

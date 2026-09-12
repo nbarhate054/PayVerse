@@ -28,7 +28,7 @@ const generateToken = (user) => {
       payverseId: user.payverseId
     },
     process.env.JWT_SECRET || 'payverse_secret_key_123',
-    { expiresIn: '7d' }
+    { expiresIn: '30d' }
   );
 };
 

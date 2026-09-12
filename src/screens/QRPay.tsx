@@ -196,10 +196,20 @@ export default function QRPayScreen() {
 
   if (step === 'processing') {
     return (
-      <div className="flex flex-col h-full w-full max-w-full items-center justify-center bg-white px-6 text-center box-border">
-        <div className="w-20 h-20 rounded-full border-4 border-orange-100 border-t-orange-500 animate-spin-ring mb-6 flex-shrink-0" />
-        <p className="text-gray-900 font-bold text-xl mb-1">Processing Simulated Payment...</p>
-        <p className="text-gray-400 text-xs">Executing local PayVerse transaction engine</p>
+      <div
+        className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="bg-white rounded-3xl w-full max-w-sm p-6 flex flex-col items-center justify-center text-center shadow-2xl relative my-auto min-h-[380px] max-h-[92vh] overflow-y-auto space-y-4"
+        >
+          <div className="w-20 h-20 rounded-full border-4 border-orange-100 border-t-orange-500 animate-spin mb-2 mx-auto shrink-0" />
+          <h3 className="text-gray-900 font-extrabold text-xl">Processing QR Payment...</h3>
+          <p className="text-gray-500 text-xs font-medium animate-pulse">
+            Executing transfer of <strong className="text-gray-800">{fmt(amountNum)}</strong> to {recipient?.name}...
+          </p>
+        </div>
       </div>
     );
   }
@@ -457,15 +467,47 @@ export default function QRPayScreen() {
       )}
 
       {step === 'pin' && (
-        <div className="flex-1 flex flex-col items-center justify-center px-8 pb-10 w-full max-w-full box-border">
-          <div className="w-14 h-14 bg-orange-100 rounded-2xl flex items-center justify-center mb-5">
-            <svg className="w-7 h-7 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-          </div>
-          <p className="text-gray-900 font-bold text-lg mb-1">Enter PayVerse PIN</p>
-          <p className="text-gray-500 text-xs mb-8 text-center">Confirm payment of <strong>{fmt(amountNum)}</strong> to <strong>{recipient?.name}</strong></p>
-          <PINInput onComplete={handlePIN} error={pinError} onReset={() => setPinError('')} />
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <form
+            onSubmit={(e) => { e.preventDefault(); }}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl w-full max-w-sm p-6 flex flex-col justify-between shadow-2xl relative my-auto min-h-[420px] max-h-[92vh] overflow-y-auto box-border"
+          >
+            <div className="flex flex-col items-center text-center w-full">
+              <div className="w-14 h-14 bg-orange-100 rounded-2xl flex items-center justify-center mb-3 shrink-0 shadow-xs">
+                <svg className="w-7 h-7 text-orange-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                </svg>
+              </div>
+              <h2 className="text-gray-900 font-extrabold text-lg mb-1">Enter PayVerse PIN</h2>
+              <p className="text-gray-500 text-xs mb-5 leading-relaxed max-w-xs">
+                Confirm payment of <strong className="text-gray-900 font-bold">{fmt(amountNum)}</strong> to <strong className="text-gray-900 font-bold">{recipient?.name}</strong>
+              </p>
+
+              {pinError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-2xl w-full text-center animate-fade-slide-up">
+                  <p className="text-red-600 font-bold text-xs">⚠️ {pinError}</p>
+                </div>
+              )}
+
+              <PINInput
+                onComplete={handlePIN}
+                error={pinError}
+                onReset={() => setPinError('')}
+              />
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400 font-medium">
+              <span>🔒 256-Bit Encrypted</span>
+              <button
+                type="button"
+                onClick={() => { setStep('confirm'); setPinError(''); }}
+                className="text-orange-600 font-bold hover:underline"
+              >
+                Back to Confirm
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

@@ -233,15 +233,39 @@ export default function RequestMoneyScreen() {
       {tab === 'incoming' && (
         <div className="flex-1 overflow-y-auto px-4 py-4 w-full max-w-full box-border mx-auto">
           {acceptingReqId && (
-            <div className="bg-white rounded-2xl p-6 mb-4 border border-gray-100 shadow-sm animate-fade-slide-up w-full max-w-full box-border">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <p className="font-bold text-gray-900 text-base">Enter PIN to Pay</p>
-                  <p className="text-gray-400 text-xs">Confirm transfer from your PayVerse wallet</p>
+            <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+              <form
+                onSubmit={(e) => { e.preventDefault(); }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-3xl w-full max-w-sm p-6 flex flex-col justify-between shadow-2xl relative my-auto min-h-[420px] max-h-[92vh] overflow-y-auto box-border"
+              >
+                <div className="flex flex-col items-center text-center w-full">
+                  <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mb-3 shrink-0 shadow-xs">
+                    <svg className="w-7 h-7 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                    </svg>
+                  </div>
+                  <h2 className="text-gray-900 font-extrabold text-lg mb-1">Enter PIN to Pay</h2>
+                  <p className="text-gray-500 text-xs mb-5 leading-relaxed max-w-xs">
+                    Confirm transfer from your PayVerse wallet
+                  </p>
+
+                  {pinError && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-2xl w-full text-center animate-fade-slide-up">
+                      <p className="text-red-600 font-bold text-xs">⚠️ {pinError}</p>
+                    </div>
+                  )}
+
+                  <PINInput onComplete={handleAcceptPIN} error={pinError} onReset={() => setPinError('')} />
                 </div>
-                <button onClick={() => { setAcceptingReqId(null); setPinError(''); }} className="text-gray-400 text-sm font-semibold">Cancel</button>
-              </div>
-              <PINInput onComplete={handleAcceptPIN} error={pinError} onReset={() => setPinError('')} />
+
+                <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-between text-xs text-gray-400 font-medium">
+                  <span>🔒 256-Bit Encrypted</span>
+                  <button type="button" onClick={() => { setAcceptingReqId(null); setPinError(''); }} className="text-blue-600 font-bold hover:underline">
+                    Cancel
+                  </button>
+                </div>
+              </form>
             </div>
           )}
 

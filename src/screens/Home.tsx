@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useApp } from '../context';
 import type { ScreenName } from '../context';
 import { fmt, initials, avatarColor, fmtTime } from '../utils';
@@ -17,6 +17,28 @@ export default function HomeScreen() {
   const [balanceVisible, setBalanceVisible] = useState(true);
   const [showMyQR, setShowMyQR] = useState(false);
   const [showScanPay, setShowScanPay] = useState(false);
+
+  // Live balance sync on mount, window focus, & tab visibility change
+  useEffect(() => {
+    app.refreshLiveBackendData();
+
+    const handleFocus = () => {
+      app.refreshLiveBackendData();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        app.refreshLiveBackendData();
+      }
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
 
   if (!user) return null;
 

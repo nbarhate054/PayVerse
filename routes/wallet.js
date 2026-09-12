@@ -36,7 +36,7 @@ const findUserByIdentifier = async (identifier) => {
 // GET /api/wallet/balance
 router.get('/balance', authMiddleware, async (req, res) => {
   try {
-    const rawUserId = req.user.userId;
+    const rawUserId = req.user?._id || req.user?.userId || req.user?.id;
 
     if (mongoose.connection.readyState === 1) {
       const user = await findUserByIdentifier(rawUserId);
@@ -46,16 +46,15 @@ router.get('/balance', authMiddleware, async (req, res) => {
         return res.json({ success: true, balance: 0, currency: 'INR' });
       }
 
-      let wallet = await Wallet.findOne({ userId }).lean();
+      let wallet = await Wallet.findOne({ userId });
       if (!wallet) {
-        wallet = new Wallet({ userId, balance: 0, currency: 'INR' });
-        await wallet.save();
+        wallet = await Wallet.create({ userId, balance: 0, currency: 'INR' });
       }
 
-      return res.json({
+      return res.status(200).json({
         success: true,
-        balance: wallet.balance,
-        currency: wallet.currency,
+        balance: Number(wallet.balance || 0),
+        currency: wallet.currency || 'INR',
         updatedAt: wallet.updatedAt
       });
     } else {
@@ -65,10 +64,10 @@ router.get('/balance', authMiddleware, async (req, res) => {
         memoryWallets.push(wallet);
       }
 
-      return res.json({
+      return res.status(200).json({
         success: true,
-        balance: wallet.balance,
-        currency: wallet.currency,
+        balance: Number(wallet.balance || 0),
+        currency: wallet.currency || 'INR',
         updatedAt: wallet.updatedAt
       });
     }
@@ -181,7 +180,14 @@ export const handleTransfer = async (req, res) => {
       const recipientName = recipientUser.name || 'Recipient';
       const recipientPhoneVal = recipientUser.phone || recipientUser.payverseId || 'Recipient';
 
-      if (senderWallet.balance < numAmount) {
+      // Update Sender Wallet atomically (ensuring balance >= numAmount)
+      const updatedSenderWallet = await Wallet.findOneAndUpdate(
+        { userId: senderObjId, balance: { $gte: numAmount } },
+        { $inc: { balance: -numAmount }, $set: { updatedAt: new Date() } },
+        { new: true }
+      );
+
+      if (!updatedSenderWallet) {
         const failedTx = new Transaction({
           userId: senderObjId,
           senderId: senderObjId,
@@ -197,24 +203,20 @@ export const handleTransfer = async (req, res) => {
         });
         await failedTx.save();
 
-        return res.status(400).json({ success: false, message: "Insufficient balance", balance: senderWallet.balance });
+        const currentSenderWallet = await Wallet.findOne({ userId: senderObjId });
+        return res.status(400).json({
+          success: false,
+          message: "Insufficient balance or sender wallet not found",
+          balance: currentSenderWallet ? currentSenderWallet.balance : 0
+        });
       }
 
-      // Check / Create recipient wallet
-      let recipientWallet = await Wallet.findOne({ userId: recipientUser._id });
-      if (!recipientWallet) {
-        recipientWallet = new Wallet({ userId: recipientUser._id, balance: 0, currency: 'INR' });
-      }
-
-      // Execute Transfer
-      senderWallet.balance -= numAmount;
-      senderWallet.updatedAt = new Date();
-
-      recipientWallet.balance += numAmount;
-      recipientWallet.updatedAt = new Date();
-
-      await senderWallet.save();
-      await recipientWallet.save();
+      // Update Recipient Wallet atomically (upsert if not exists)
+      const updatedRecipientWallet = await Wallet.findOneAndUpdate(
+        { userId: recipientUser._id },
+        { $inc: { balance: numAmount }, $set: { updatedAt: new Date(), currency: 'INR' } },
+        { new: true, upsert: true }
+      );
 
       // Create Transaction Document
       const tx = new Transaction({
@@ -242,8 +244,8 @@ export const handleTransfer = async (req, res) => {
       return res.status(200).json({
         success: true,
         message: `₹${numAmount} transferred successfully to ${recipientName}`,
-        balance: senderWallet.balance,
-        newBalance: senderWallet.balance,
+        balance: updatedSenderWallet.balance,
+        newBalance: updatedSenderWallet.balance,
         transaction: populatedTx || tx
       });
     } else {
