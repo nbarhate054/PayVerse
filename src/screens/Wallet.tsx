@@ -1,8 +1,7 @@
 import { useApp, type ScreenName } from '../context';
-import { fmt, fmtDateGroupKey, fmtTime } from '../utils';
+import { fmt, fmtTime } from '../utils';
 import {
-  IconPlusCircle, IconSend, IconReceive, IconUtensils,
-  IconCar, IconShoppingBag, IconGamepad, IconBook
+  IconPlusCircle, IconSend, IconReceive
 } from '../components/Icons';
 
 export default function WalletScreen() {
@@ -15,14 +14,6 @@ export default function WalletScreen() {
   const totalAdded = allTx.filter(t => t.type === 'ADD_MONEY').reduce((s, t) => s + t.amount, 0);
   const totalSent = allTx.filter(t => t.type === 'P2P_TRANSFER' && t.senderId === user.id).reduce((s, t) => s + t.amount, 0);
   const totalReceived = allTx.filter(t => t.type === 'P2P_TRANSFER' && t.receiverId === user.id).reduce((s, t) => s + t.amount, 0);
-
-  const spendingCategories = [
-    { name: 'Food & Snacks', icon: <IconUtensils size={18} className="text-amber-600" />, amount: 1250, total: 3500, color: 'bg-amber-500' },
-    { name: 'Travel & Metro', icon: <IconCar size={18} className="text-blue-600" />, amount: 640, total: 3500, color: 'bg-blue-500' },
-    { name: 'Shopping', icon: <IconShoppingBag size={18} className="text-purple-600" />, amount: 900, total: 3500, color: 'bg-purple-500' },
-    { name: 'Entertainment', icon: <IconGamepad size={18} className="text-pink-600" />, amount: 450, total: 3500, color: 'bg-pink-500' },
-    { name: 'Education & Books', icon: <IconBook size={18} className="text-emerald-600" />, amount: 300, total: 3500, color: 'bg-emerald-500' },
-  ];
 
   const walletActions: { label: string; icon: React.ReactNode; color: string; screen: ScreenName }[] = [
     { label: 'Add Money', icon: <IconPlusCircle size={22} />, color: 'bg-blue-600 text-white', screen: 'add-money' },
@@ -75,36 +66,6 @@ export default function WalletScreen() {
             </button>
           ))}
         </div>
-      </div>
-
-      {/* Spending Overview */}
-      <div className="px-5 mb-5">
-        <h3 className="text-gray-900 font-bold text-sm mb-3">Spending Overview</h3>
-        {totalSent === 0 ? (
-          <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm text-center">
-            <p className="text-gray-500 font-semibold text-xs">No spending activity recorded yet</p>
-            <p className="text-gray-400 text-[11px] mt-0.5">Send or add money to see your spending breakdown.</p>
-          </div>
-        ) : (
-          <div className="bg-white rounded-2xl p-4 border border-gray-100 shadow-sm space-y-3.5">
-            {spendingCategories.map(cat => {
-              const pct = totalSent > 0 ? Math.round((cat.amount / totalSent) * 100) : 0;
-              return (
-                <div key={cat.name}>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="font-semibold text-gray-800 flex items-center gap-2">
-                      {cat.icon} {cat.name}
-                    </span>
-                    <span className="font-bold text-gray-900">{fmt(cat.amount)}</span>
-                  </div>
-                  <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                    <div className={`h-full ${cat.color}`} style={{ width: `${pct}%` }} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
 
       {/* Transaction history */}
