@@ -16,14 +16,6 @@ export const getAuthToken = (): string | null => {
     sessionStorage.getItem('payverse_token');
 
   if (!token || token === 'null' || token === 'undefined' || !token.trim()) {
-    try {
-      const stateStr = localStorage.getItem('payverse_state') || localStorage.getItem('payverse_user');
-      if (stateStr) {
-        const fallbackToken = `demo_token_${Date.now()}`;
-        setAuthToken(fallbackToken);
-        return fallbackToken;
-      }
-    } catch {}
     return null;
   }
   return token.trim();
@@ -279,12 +271,22 @@ export const api = {
     }
   },
 
-  getMe: async () => {
-    let token = getAuthToken();
-    if (!token) {
-      token = `demo_token_${Date.now()}`;
-      setAuthToken(token);
+  // Generic HTTP GET helper (returns { data, ...result })
+  get: async (endpoint: string) => {
+    try {
+      const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+      const response = await fetch(`${getApiBaseUrl()}${cleanEndpoint}`, {
+        method: 'GET',
+        headers: getHeaders(true),
+      });
+      const data = await handleResponse(response);
+      return { data, ...data };
+    } catch (err: any) {
+      return { data: { success: false, message: err.message }, success: false, message: err.message };
     }
+  },
+
+  getMe: async () => {
     try {
       const response = await fetch(`${getApiBaseUrl()}/auth/me`, {
         method: 'GET',
@@ -296,16 +298,32 @@ export const api = {
     }
   },
 
-  getUsers: async (search?: string) => {
-    let token = getAuthToken();
-    if (!token) {
-      token = `demo_token_${Date.now()}`;
-      setAuthToken(token);
+  // Strictly fetches active registered contacts from MongoDB Atlas (/api/users/all-contacts)
+  getAllContacts: async () => {
+    try {
+      const response = await fetch(`${getApiBaseUrl()}/users/all-contacts`, {
+        method: 'GET',
+        headers: getHeaders(true),
+      });
+      const result = await handleResponse(response);
+      if (result && result.success) return result;
+
+      // Fallback endpoint
+      const fbResponse = await fetch(`${getApiBaseUrl()}/users`, {
+        method: 'GET',
+        headers: getHeaders(true),
+      });
+      return await handleResponse(fbResponse);
+    } catch (err: any) {
+      return { success: false, users: [] };
     }
+  },
+
+  getUsers: async (search?: string) => {
     try {
       const url = search && search.trim()
-        ? `${getApiBaseUrl()}/users?search=${encodeURIComponent(search.trim())}`
-        : `${getApiBaseUrl()}/users`;
+        ? `${getApiBaseUrl()}/users/all-contacts?search=${encodeURIComponent(search.trim())}`
+        : `${getApiBaseUrl()}/users/all-contacts`;
       const response = await fetch(url, {
         method: 'GET',
         headers: getHeaders(true),
@@ -314,8 +332,8 @@ export const api = {
       if (result && result.success) return result;
 
       const fbUrl = search && search.trim()
-        ? `${getApiBaseUrl()}/auth/users?search=${encodeURIComponent(search.trim())}`
-        : `${getApiBaseUrl()}/auth/users`;
+        ? `${getApiBaseUrl()}/users?search=${encodeURIComponent(search.trim())}`
+        : `${getApiBaseUrl()}/users`;
       const fbResponse = await fetch(fbUrl, {
         method: 'GET',
         headers: getHeaders(true),
@@ -327,11 +345,6 @@ export const api = {
   },
 
   findUser: async (query: string) => {
-    let token = getAuthToken();
-    if (!token) {
-      token = `demo_token_${Date.now()}`;
-      setAuthToken(token);
-    }
     try {
       const response = await fetch(`${getApiBaseUrl()}/users/find?query=${encodeURIComponent(query)}`, {
         method: 'GET',
@@ -345,11 +358,6 @@ export const api = {
 
   // Wallet API
   getBalance: async () => {
-    let token = getAuthToken();
-    if (!token) {
-      token = `demo_token_${Date.now()}`;
-      setAuthToken(token);
-    }
     try {
       const response = await fetch(`${getApiBaseUrl()}/wallet/balance`, {
         method: 'GET',
@@ -362,19 +370,14 @@ export const api = {
   },
 
   transfer: async (data: { recipient?: string; recipientId?: string; recipientPhone?: string; receiver?: string; receiverId?: string; receiverPayverseId?: string; receiverEmail?: string; receiverPhone?: string; amount: number; pin?: string }) => {
-    let token = getAuthToken();
-    if (!token) {
-      token = `demo_token_${Date.now()}`;
-      setAuthToken(token);
-    }
+    const token = getAuthToken();
     try {
       const recipientTarget = data.recipientId || data.recipientPhone || data.recipient || data.receiver || data.receiverPayverseId || data.receiverId;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const response = await fetch(`${getApiBaseUrl()}/wallet/transfer`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers,
         body: JSON.stringify({
           ...data,
           recipientId: data.recipientId || recipientTarget,
@@ -392,11 +395,6 @@ export const api = {
   },
 
   addMoney: async (data: { amount: number; paymentMethod?: string }) => {
-    let token = getAuthToken();
-    if (!token) {
-      token = `demo_token_${Date.now()}`;
-      setAuthToken(token);
-    }
     try {
       const response = await fetch(`${getApiBaseUrl()}/wallet/add`, {
         method: 'POST',

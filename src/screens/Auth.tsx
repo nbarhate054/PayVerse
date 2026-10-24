@@ -269,6 +269,21 @@ export function LoginScreen() {
     setError('');
 
     try {
+      // Always authenticate against Backend Login API to obtain a valid JWT token
+      const res = await api.login({
+        identifier: phone,
+        password: targetPin,
+      });
+
+      if (res && res.success && res.token) {
+        setAuthToken(res.token);
+        await app.refreshLiveBackendData();
+        setIsLoggingIn(false);
+        app.showToast('Welcome Back!', 'Logged in successfully.', 'success');
+        app.navigateRoot('home');
+        return;
+      }
+
       if (matchedUser?.id) {
         const fullUserObj = app.state.users.find(u => u.id === matchedUser.id);
         if (fullUserObj && (fullUserObj.pin === targetPin || targetPin === '1234' || targetPin === '4821')) {
@@ -280,12 +295,6 @@ export function LoginScreen() {
           return;
         }
       }
-
-      // Try Backend PIN verification / Login API
-      const res = await api.login({
-        identifier: phone,
-        password: targetPin,
-      });
 
       setIsLoggingIn(false);
 

@@ -17,6 +17,12 @@ export const authMiddleware = (req, res, next) => {
 
     const secret = process.env.JWT_SECRET || 'payverse_secret_key_123';
     const decoded = jwt.verify(token, secret);
+    if (decoded && typeof decoded === 'object') {
+      const idVal = decoded._id || decoded.userId || decoded.id;
+      decoded._id = idVal;
+      decoded.userId = idVal;
+      decoded.id = idVal;
+    }
     req.user = decoded;
     next();
   } catch (err) {

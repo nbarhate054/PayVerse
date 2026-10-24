@@ -1,8 +1,9 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context';
 import type { User, PaymentRequest } from '../store';
 import { fmt, fmtDateGroupKey, fmtTime, initials, avatarColor } from '../utils';
 import PINInput from '../components/PINInput';
+import { api } from '../services/api';
 
 type SendStep = 'user' | 'amount' | 'success';
 
@@ -20,6 +21,58 @@ export default function RequestMoneyScreen() {
   const [note, setNote] = useState('');
   const [createdReq, setCreatedReq] = useState<PaymentRequest | null>(null);
 
+  // Contacts state strictly from database
+  const [registeredUsers, setRegisteredUsers] = useState<User[]>([]);
+  const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchContacts = async () => {
+      setIsLoadingUsers(true);
+      try {
+        const res = await api.get('/users/all-contacts');
+        const data = res.data?.users ? res.data : (res.users ? res : null);
+        if (isMounted) {
+          if (data && data.success && Array.isArray(data.users)) {
+            const mapped: User[] = data.users.map((u: any) => ({
+              id: u.payverseId || u._id || u.id || u.phone,
+              name: u.name,
+              phone: u.phone,
+              payverseId: u.payverseId || (u.name ? `${u.name.toLowerCase().replace(/\s+/g, '')}@payverse` : undefined),
+              balance: 0,
+              pin: '1234',
+              isOnboarded: true,
+              onboardingStatus: 'completed',
+            }));
+
+            const cleanCurrentUserPhone = user.phone ? user.phone.replace(/\D/g, '').slice(-10) : '';
+            const currentUserId = user.id;
+            const currentUserPayverse = user.payverseId?.toLowerCase();
+
+            const strictlyFiltered = mapped.filter(u => {
+              const uPhone = u.phone ? u.phone.replace(/\D/g, '').slice(-10) : '';
+              const uId = u.id;
+              const uPayverse = u.payverseId?.toLowerCase();
+              if (currentUserId && (uId === currentUserId || (u as any)._id === currentUserId)) return false;
+              if (currentUserPayverse && uPayverse === currentUserPayverse) return false;
+              if (cleanCurrentUserPhone && uPhone === cleanCurrentUserPhone) return false;
+              return true;
+            });
+            setRegisteredUsers(strictlyFiltered);
+          } else {
+            setRegisteredUsers([]);
+          }
+        }
+      } catch {
+        if (isMounted) setRegisteredUsers([]);
+      } finally {
+        if (isMounted) setIsLoadingUsers(false);
+      }
+    };
+    fetchContacts();
+    return () => { isMounted = false; };
+  }, [user.id, user.phone, user.payverseId]);
+
   // Accept flow state
   const [acceptingReqId, setAcceptingReqId] = useState<string | null>(null);
   const [pinError, setPinError] = useState('');
@@ -27,7 +80,30 @@ export default function RequestMoneyScreen() {
   const allRequests = app.getPaymentRequestsForCurrentUser();
   const incoming = allRequests.filter(r => r.payerId === user.id && (r.status === 'Pending' || r.status === 'PENDING'));
   const myRequests = allRequests.filter(r => r.requesterId === user.id);
-  const results = app.searchUsers(query);
+
+  const cleanCurrentUserPhone = user.phone ? user.phone.replace(/\D/g, '').slice(-10) : '';
+  const currentUserId = user.id;
+  const currentUserPayverse = user.payverseId?.toLowerCase();
+
+  const filteredUsers = registeredUsers.filter(u => {
+    const uPhone = u.phone ? u.phone.replace(/\D/g, '').slice(-10) : '';
+    const uId = u.id;
+    const uPayverse = u.payverseId?.toLowerCase();
+    if (currentUserId && (uId === currentUserId || (u as any)._id === currentUserId)) return false;
+    if (currentUserPayverse && uPayverse === currentUserPayverse) return false;
+    if (cleanCurrentUserPhone && uPhone === cleanCurrentUserPhone) return false;
+
+    if (!query.trim()) return true;
+    const q = query.trim().toLowerCase();
+    const qDigits = q.replace(/\D/g, '');
+    const uName = (u.name || '').toLowerCase();
+    return (
+      uName.includes(q) ||
+      (uPayverse && uPayverse.includes(q)) ||
+      (qDigits.length > 0 && uPhone.includes(qDigits)) ||
+      (u.phone && u.phone.toLowerCase().includes(q))
+    );
+  });
 
   const handleSendRequest = () => {
     const n = parseFloat(amount);
@@ -100,12 +176,17 @@ export default function RequestMoneyScreen() {
                 className="w-full border border-gray-200 rounded-2xl px-4 py-3.5 mb-4 focus:outline-none focus:ring-2 focus:ring-violet-500 bg-white text-sm box-border"
               />
               <div className="bg-white rounded-2xl overflow-hidden border border-gray-100 shadow-sm w-full max-w-full box-border">
-                {(query ? results : app.state.users.filter(u => u.id !== user.id)).map((u, i, arr) => (
-                  <button
-                    key={u.id}
-                    onClick={() => { setRecipient(u); setSendStep('amount'); setQuery(''); }}
-                    className={`w-full flex items-center gap-3 px-4 py-3.5 active:bg-gray-50 transition-colors ${i !== arr.length - 1 ? 'border-b border-gray-50' : ''}`}
-                  >
+                {filteredUsers.length === 0 ? (
+                  <div className="text-center py-8 px-4 text-gray-400 text-xs">
+                    No registered contacts found on PayVerse yet.
+                  </div>
+                ) : (
+                  filteredUsers.map((u, i, arr) => (
+                    <button
+                      key={u.id}
+                      onClick={() => { setRecipient(u); setSendStep('amount'); setQuery(''); }}
+                      className={`w-full flex items-center gap-3 px-4 py-3.5 active:bg-gray-50 transition-colors ${i !== arr.length - 1 ? 'border-b border-gray-50' : ''}`}
+                    >
                     <div className={`w-11 h-11 rounded-2xl bg-gradient-to-br ${avatarColor(u.name)} flex items-center justify-center flex-shrink-0`}>
                       <span className="text-white font-bold text-sm">{initials(u.name)}</span>
                     </div>
@@ -115,7 +196,7 @@ export default function RequestMoneyScreen() {
                     </div>
                     <span className="text-xs font-bold text-violet-600 bg-violet-50 px-3 py-1 rounded-xl flex-shrink-0">Select</span>
                   </button>
-                ))}
+                )))}
               </div>
 
               {myRequests.length > 0 && (

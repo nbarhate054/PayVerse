@@ -20,9 +20,12 @@ export const normalizePhone = (phone) => {
 };
 
 const generateToken = (user) => {
+  const uid = (user._id || user.id || '').toString();
   return jwt.sign(
     {
-      userId: user._id || user.id,
+      _id: uid,
+      userId: uid,
+      id: uid,
       email: user.email,
       phone: user.phone,
       payverseId: user.payverseId
@@ -35,34 +38,54 @@ const generateToken = (user) => {
 // GET /api/auth/users
 router.get('/users', authMiddleware, async (req, res) => {
   try {
-    const currentUserId = req.user.userId || req.user._id;
+    const currentUserId = req.user._id || req.user.userId || req.user.id;
+    const currentUserPayverse = req.user.payverseId;
+    const currentUserPhone = req.user.phone ? req.user.phone.replace(/\D/g, '').slice(-10) : '';
     const searchQuery = (req.query.search || req.query.query || '').toString().trim();
 
     if (mongoose.connection.readyState === 1) {
-      const filter = {};
-      if (currentUserId && mongoose.isValidObjectId(currentUserId)) {
-        filter._id = { $ne: currentUserId };
+      const excludeConditions = [];
+      if (currentUserId) {
+        if (mongoose.isValidObjectId(currentUserId)) {
+          excludeConditions.push({ _id: currentUserId });
+        }
+        excludeConditions.push({ payverseId: currentUserId });
       }
+      if (currentUserPayverse) {
+        excludeConditions.push({ payverseId: currentUserPayverse });
+      }
+      if (currentUserPhone) {
+        excludeConditions.push({ phone: currentUserPhone });
+        excludeConditions.push({ phone: `+91${currentUserPhone}` });
+      }
+
+      const filter = excludeConditions.length > 0 ? { $nor: excludeConditions } : {};
+
       if (searchQuery) {
         const esc = searchQuery.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-        filter.$or = [
+        const digits = searchQuery.replace(/\D/g, '');
+        const conditions = [
           { name: new RegExp(esc, 'i') },
           { payverseId: new RegExp(esc, 'i') },
           { phone: new RegExp(esc, 'i') },
           { email: new RegExp(esc, 'i') },
         ];
+        if (digits && digits.length >= 4) {
+          conditions.push({ phone: new RegExp(digits) });
+        }
+        filter.$and = [{ $or: conditions }];
       }
 
-      const users = await User.find(filter).select('-password').sort({ createdAt: -1 });
+      const users = await User.find(filter).select('-password').sort({ name: 1 });
 
       return res.json({
         success: true,
         users: users.map(u => ({
           id: u.payverseId || u._id.toString(),
-          _id: u._id,
+          _id: u._id.toString(),
           name: u.name,
           email: u.email,
-          phone: u.phone,
+          phone: u.phone ? u.phone.replace(/\D/g, '').slice(-10) : '',
           payverseId: u.payverseId,
           createdAt: u.createdAt
         }))

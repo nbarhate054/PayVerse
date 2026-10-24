@@ -6,23 +6,33 @@ import { memoryUsers } from './auth.js';
 
 const router = express.Router();
 
-// GET /api/users - Fetch all registered users excluding currently logged-in user
-router.get('/', authMiddleware, async (req, res) => {
+// Handler for fetching all registered contacts from MongoDB Atlas excluding current user
+const handleGetContacts = async (req, res) => {
   try {
     res.setHeader('Content-Type', 'application/json');
-    const currentUserId = req.user?.userId || req.user?._id;
+    const currentUserId = req.user?._id || req.user?.userId || req.user?.id;
+    const currentUserPayverseId = req.user?.payverseId;
+    const currentUserPhone = req.user?.phone ? req.user.phone.replace(/\D/g, '').slice(-10) : '';
     const searchQuery = (req.query.search || req.query.query || '').toString().trim();
 
     if (mongoose.connection.readyState === 1) {
-      const filter = {};
-
+      // Build conditions to strictly exclude the current logged-in user
+      const excludeConditions = [];
       if (currentUserId) {
         if (mongoose.isValidObjectId(currentUserId)) {
-          filter._id = { $ne: currentUserId };
-        } else {
-          filter.payverseId = { $ne: currentUserId };
+          excludeConditions.push({ _id: currentUserId });
         }
+        excludeConditions.push({ payverseId: currentUserId });
       }
+      if (currentUserPayverseId) {
+        excludeConditions.push({ payverseId: currentUserPayverseId });
+      }
+      if (currentUserPhone) {
+        excludeConditions.push({ phone: currentUserPhone });
+        excludeConditions.push({ phone: `+91${currentUserPhone}` });
+      }
+
+      const filter = excludeConditions.length > 0 ? { $nor: excludeConditions } : {};
 
       if (searchQuery) {
         const esc = searchQuery.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
@@ -36,58 +46,69 @@ router.get('/', authMiddleware, async (req, res) => {
         if (digits && digits.length >= 4) {
           conditions.push({ phone: new RegExp(digits) });
         }
-        filter.$or = conditions;
+        filter.$and = [{ $or: conditions }];
       }
 
-      const users = await User.find(filter).select('-password').sort({ createdAt: -1 });
+      const users = await User.find(filter)
+        .select('name phone payverseId email createdAt userType')
+        .sort({ name: 1 })
+        .lean();
 
-      return res.json({
+      return res.status(200).json({
         success: true,
         users: users.map(u => ({
           id: u.payverseId || u._id.toString(),
-          _id: u._id,
+          _id: u._id.toString(),
           name: u.name,
           email: u.email,
-          phone: u.phone,
+          phone: u.phone ? u.phone.replace(/\D/g, '').slice(-10) : '',
           payverseId: u.payverseId,
           createdAt: u.createdAt,
-          userType: u.userType,
+          userType: u.userType || 'adult',
         }))
       });
     } else {
       // Memory Store Fallback
       let list = memoryUsers.filter(u => {
         const uId = (u._id || u.id || '').toString();
-        const uPayverse = (u.payverseId || '').toString();
-        if (currentUserId && (uId === currentUserId.toString() || uPayverse === currentUserId.toString())) {
+        const uPayverse = (u.payverseId || '').toString().toLowerCase();
+        const uPhone = (u.phone || '').toString().replace(/\D/g, '').slice(-10);
+
+        if (currentUserId && (uId === currentUserId.toString() || uPayverse === currentUserId.toString().toLowerCase())) {
           return false;
         }
+        if (currentUserPayverseId && uPayverse === currentUserPayverseId.toLowerCase()) {
+          return false;
+        }
+        if (currentUserPhone && uPhone === currentUserPhone) {
+          return false;
+        }
+
         if (!searchQuery) return true;
         const sLower = searchQuery.toLowerCase();
         const uName = (u.name || '').toLowerCase();
-        const uPhone = (u.phone || '').toString();
         const uEmail = (u.email || '').toLowerCase();
         return (
           uName.includes(sLower) ||
-          uPayverse.toLowerCase().includes(sLower) ||
-          uPhone.includes(searchQuery) ||
+          uPayverse.includes(sLower) ||
+          (u.phone || '').includes(searchQuery) ||
           uEmail.includes(sLower)
         );
       });
 
-      list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
-      return res.json({
+      return res.status(200).json({
         success: true,
         users: list.map(u => ({
-          id: u.payverseId || u._id || u.id,
-          _id: u._id || u.id,
+          id: u.payverseId || (u._id || u.id || '').toString(),
+          _id: (u._id || u.id || '').toString(),
           name: u.name,
           email: u.email,
-          phone: u.phone,
+          phone: u.phone ? u.phone.replace(/\D/g, '').slice(-10) : '',
           payverseId: u.payverseId || `${u.name.toLowerCase().replace(/\s+/g, '')}@payverse`,
           createdAt: u.createdAt,
-          userType: u.userType,
+          userType: u.userType || 'adult',
         }))
       });
     }
@@ -96,7 +117,11 @@ router.get('/', authMiddleware, async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     return res.status(500).json({ success: false, message: error.message || 'Error fetching users' });
   }
-});
+};
+
+// GET /api/users/all-contacts and GET /api/users
+router.get('/all-contacts', authMiddleware, handleGetContacts);
+router.get('/', authMiddleware, handleGetContacts);
 
 const handleFindUser = async (req, res) => {
   try {

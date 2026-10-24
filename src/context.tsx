@@ -281,8 +281,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (usersRes.success && Array.isArray(usersRes.users)) {
           otherUsers = usersRes.users.map((u: any) => ({
             id: u.payverseId || u._id || u.id,
+            _id: u._id,
             name: u.name,
+            email: u.email,
             phone: u.phone,
+            payverseId: u.payverseId,
             balance: 0,
             pin: '1234',
             isOnboarded: true,
@@ -290,13 +293,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           }));
         }
 
+        // Strictly exclude current user under all identifier forms
+        const cleanCurrentUserPhone = userObj.phone ? userObj.phone.replace(/\D/g, '').slice(-10) : '';
+        const strictlyFilteredOthers = otherUsers.filter(u => {
+          const uPhone = u.phone ? u.phone.replace(/\D/g, '').slice(-10) : '';
+          if (u.id === userObj.id || (u as any)._id === userObj.id) return false;
+          if (u.payverseId && userObj.payverseId && u.payverseId.toLowerCase() === userObj.payverseId.toLowerCase()) return false;
+          if (cleanCurrentUserPhone && uPhone === cleanCurrentUserPhone) return false;
+          return true;
+        });
+
         let backendTxs: Transaction[] = [];
         if (historyRes.success && Array.isArray(historyRes.transactions)) {
           backendTxs = historyRes.transactions.map(mapBackendTxToFrontend);
         }
 
         const allUsersMap = new Map<string, User>();
-        otherUsers.forEach(u => allUsersMap.set(u.id, u));
+        strictlyFilteredOthers.forEach(u => allUsersMap.set(u.id, u));
         allUsersMap.set(userObj.id, userObj);
 
         updateState(prev => ({

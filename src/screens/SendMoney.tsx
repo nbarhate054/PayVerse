@@ -19,21 +19,22 @@ export default function SendMoneyScreen() {
   const [txId, setTxId] = useState('');
   const processingRef = useRef(false);
 
-  // Registered Users list state
+  // Registered Users list state strictly loaded from database
   const [registeredUsers, setRegisteredUsers] = useState<User[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState<boolean>(true);
   const [isSearchingApi, setIsSearchingApi] = useState<boolean>(false);
 
-  // Load registered users on mount
+  // Load registered contacts strictly from /users/all-contacts on mount
   useEffect(() => {
     let isMounted = true;
-    const loadUsers = async () => {
+    const fetchContacts = async () => {
       setIsLoadingUsers(true);
       try {
-        const res = await api.getUsers();
+        const res = await api.get('/users/all-contacts');
+        const data = res.data?.users ? res.data : (res.users ? res : null);
         if (isMounted) {
-          if (res && res.success && Array.isArray(res.users)) {
-            const mapped: User[] = res.users.map((u: any) => ({
+          if (data && data.success && Array.isArray(data.users)) {
+            const mapped: User[] = data.users.map((u: any) => ({
               id: u.payverseId || u._id || u.id || u.phone,
               name: u.name,
               phone: u.phone,
@@ -43,25 +44,41 @@ export default function SendMoneyScreen() {
               isOnboarded: true,
               onboardingStatus: 'completed',
             }));
-            setRegisteredUsers(mapped);
+
+            // Filter out current logged in user strictly
+            const cleanCurrentUserPhone = user.phone ? user.phone.replace(/\D/g, '').slice(-10) : '';
+            const currentUserId = user.id;
+            const currentUserPayverse = user.payverseId?.toLowerCase();
+
+            const strictlyFiltered = mapped.filter(u => {
+              const uPhone = u.phone ? u.phone.replace(/\D/g, '').slice(-10) : '';
+              const uId = u.id;
+              const uPayverse = u.payverseId?.toLowerCase();
+              if (currentUserId && (uId === currentUserId || (u as any)._id === currentUserId)) return false;
+              if (currentUserPayverse && uPayverse === currentUserPayverse) return false;
+              if (cleanCurrentUserPhone && uPhone === cleanCurrentUserPhone) return false;
+              return true;
+            });
+
+            setRegisteredUsers(strictlyFiltered);
           } else {
-            const fallback = app.state.users.filter(u => u.id !== user.id && u.phone !== user.phone);
-            setRegisteredUsers(fallback);
+            // Strictly NO mock fallback!
+            setRegisteredUsers([]);
           }
         }
-      } catch {
+      } catch (error) {
+        console.error("Error fetching contacts:", error);
         if (isMounted) {
-          const fallback = app.state.users.filter(u => u.id !== user.id && u.phone !== user.phone);
-          setRegisteredUsers(fallback);
+          setRegisteredUsers([]);
         }
       } finally {
         if (isMounted) setIsLoadingUsers(false);
       }
     };
 
-    loadUsers();
+    fetchContacts();
     return () => { isMounted = false; };
-  }, [user.id]);
+  }, [user.id, user.phone, user.payverseId]);
 
   // Handle URL navigation params
   useEffect(() => {
@@ -109,19 +126,29 @@ export default function SendMoneyScreen() {
     setQuery('');
   };
 
+  const cleanCurrentUserPhone = user.phone ? user.phone.replace(/\D/g, '').slice(-10) : '';
+  const currentUserId = user.id;
+  const currentUserPayverse = user.payverseId?.toLowerCase();
+
   const filteredUsers = registeredUsers.filter(u => {
-    if (u.id === user.id || u.phone === user.phone) return false;
+    const uPhone = u.phone ? u.phone.replace(/\D/g, '').slice(-10) : '';
+    const uId = u.id;
+    const uPayverse = u.payverseId?.toLowerCase();
+
+    // Exclude currently logged-in user under any representation
+    if (currentUserId && (uId === currentUserId || (u as any)._id === currentUserId)) return false;
+    if (currentUserPayverse && uPayverse === currentUserPayverse) return false;
+    if (cleanCurrentUserPhone && uPhone === cleanCurrentUserPhone) return false;
+
     if (!query.trim()) return true;
 
     const q = query.trim().toLowerCase();
     const qDigits = q.replace(/\D/g, '');
     const uName = (u.name || '').toLowerCase();
-    const uPayverse = (u.payverseId || u.id || '').toLowerCase();
-    const uPhone = (u.phone || '').replace(/\D/g, '');
 
     return (
       uName.includes(q) ||
-      uPayverse.includes(q) ||
+      (uPayverse && uPayverse.includes(q)) ||
       (qDigits.length > 0 && uPhone.includes(qDigits)) ||
       (u.phone && u.phone.toLowerCase().includes(q))
     );
